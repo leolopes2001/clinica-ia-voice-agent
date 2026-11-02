@@ -19,6 +19,7 @@ from clinica_api.esquemas import (
     ConfirmarEntrada,
     HoldCriado,
     Horario,
+    Opcao,
     RemarcarEntrada,
     SegurarEntrada,
 )
@@ -41,6 +42,7 @@ class ErroAgenda(Exception):
         super().__init__(motivo)
         self.motivo = motivo
         self.alternativas = [Horario.model_validate(h) for h in alternativas]
+        self.opcoes: list[Opcao] = []
 
 
 @dataclass(frozen=True)
@@ -89,7 +91,7 @@ async def _ler_contexto(
 
 
 @asynccontextmanager
-async def _transacao(sessao: AsyncSession) -> AsyncIterator[None]:
+async def transacao(sessao: AsyncSession) -> AsyncIterator[None]:
     try:
         yield
         await sessao.commit()
@@ -98,7 +100,7 @@ async def _transacao(sessao: AsyncSession) -> AsyncIterator[None]:
         raise
 
 
-def _chave(contexto: Contexto, operacao: str, chave: str) -> str:
+def compor_chave(contexto: Contexto, operacao: str, chave: str) -> str:
     return f"{contexto.clinica_id}:{operacao}:{chave}"
 
 
@@ -182,10 +184,10 @@ async def segurar(
     config: ConfigAgenda,
     publicador: PublicadorAgenda,
 ) -> HoldCriado:
-    chave_completa = _chave(contexto, "segurar", chave)
+    chave_completa = compor_chave(contexto, "segurar", chave)
     resposta: HoldCriado | None = None
     eventos: list[EventoAgendamento] = []
-    async with _transacao(sessao):
+    async with transacao(sessao):
         await travar(sessao, chave_completa)
         guardada = await idempotencia.buscar(sessao, chave_completa)
         if guardada is not None and await _hold_valido(sessao, guardada):
@@ -324,8 +326,8 @@ async def confirmar(
     chave: str,
     publicador: PublicadorAgenda,
 ) -> AgendamentoConfirmado:
-    chave_completa = _chave(contexto, "confirmar", chave)
-    async with _transacao(sessao):
+    chave_completa = compor_chave(contexto, "confirmar", chave)
+    async with transacao(sessao):
         await travar(sessao, chave_completa)
         guardada = await idempotencia.buscar(sessao, chave_completa)
         if guardada is not None:
@@ -342,7 +344,7 @@ async def confirmar(
     return resposta
 
 
-def _exigir_identidade(contexto: Contexto) -> None:
+def exigir_identidade(contexto: Contexto) -> None:
     if contexto.voz and not contexto.identidade_verificada:
         raise ErroAgenda("identidade_nao_verificada")
 
@@ -388,14 +390,14 @@ async def remarcar(
     chave: str,
     publicador: PublicadorAgenda,
 ) -> AgendamentoConfirmado:
-    chave_completa = _chave(contexto, "remarcar", chave)
-    async with _transacao(sessao):
+    chave_completa = compor_chave(contexto, "remarcar", chave)
+    async with transacao(sessao):
         await travar(sessao, chave_completa)
         guardada = await idempotencia.buscar(sessao, chave_completa)
         if guardada is not None:
             return AgendamentoConfirmado.model_validate(guardada)
 
-        _exigir_identidade(contexto)
+        exigir_identidade(contexto)
         antigo = await _consulta_alteravel(sessao, contexto, agendamento_id)
         assert antigo.paciente_id is not None
         recursos = await _recursos_do_hold(sessao, contexto, entrada.hold_id)
@@ -418,14 +420,14 @@ async def cancelar(
     chave: str,
     publicador: PublicadorAgenda,
 ) -> AgendamentoCancelado:
-    chave_completa = _chave(contexto, "cancelar", chave)
-    async with _transacao(sessao):
+    chave_completa = compor_chave(contexto, "cancelar", chave)
+    async with transacao(sessao):
         await travar(sessao, chave_completa)
         guardada = await idempotencia.buscar(sessao, chave_completa)
         if guardada is not None:
             return AgendamentoCancelado.model_validate(guardada)
 
-        _exigir_identidade(contexto)
+        exigir_identidade(contexto)
         agendamento = await _consulta_alteravel(sessao, contexto, agendamento_id)
         inicio = _inicio(agendamento)
         cancelada = await _cancelar_consulta(sessao, agendamento_id, entrada.motivo)

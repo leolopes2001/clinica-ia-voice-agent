@@ -4,6 +4,7 @@ members = ["packages/*", "services/*"]
 [dependency-groups]
 dev = [
     "httpx",
+    "httpx2>=2.16.0",
     "mypy",
     "pre-commit",
     "pytest",
