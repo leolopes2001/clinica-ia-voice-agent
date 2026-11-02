@@ -28,7 +28,7 @@ Se algo no código conflitar com a spec, a spec vence. Se a spec estiver errada 
 
 ## Stack
 
-- Agente: `google-adk[livekit]` >= 2.9 (LiveKitRunner, experimental), `livekit-agents` >= 1.4, modelo `gemini-live-2.5-flash-native-audio`
+- Agente: `google-adk[livekit]` >= 2.9 (LiveKitRunner, experimental), `livekit-agents` >= 1.4, modelo definido em `AGENTE_MODELO_VOZ` (candidatos: `gemini-3.1-flash-live-preview` e `gemini-2.5-flash-native-audio-latest`, escolha na T3.1)
 - MCP: SDK oficial `mcp` 2.x (`MCPServer`, antigo FastMCP), transporte Streamable HTTP — `mcp-clinica` e `mcp-conhecimento`
 - API e painel: FastAPI, SQLAlchemy 2 async, asyncpg, Alembic, Pydantic v2, Jinja2 + HTMX + SSE
 - Dados: PostgreSQL 16 + pgvector + btree_gist
