@@ -1,6 +1,6 @@
 # Spec — Recepcionista de Voz para Clínicas Odontológicas
 
-> Versão online (com os diagramas): https://claude.ai/artifact/HwpveheFJdtSRCdoK6Ln1q
+> **Este arquivo é a fonte da verdade do projeto.** Se algo no código ou em outro documento conflitar com ele, este arquivo vence.
 
 ## Como usar este documento
 
