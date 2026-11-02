@@ -285,12 +285,14 @@ source = { editable = "services/agent" }
 dependencies = [
     { name = "clinica-core", extra = ["rabbit"] },
     { name = "google-adk" },
+    { name = "httpx" },
 ]
 
 [package.metadata]
 requires-dist = [
     { name = "clinica-core", extras = ["rabbit"], editable = "packages/core" },
     { name = "google-adk", specifier = ">=2.9" },
+    { name = "httpx" },
 ]
 
 [[package]]

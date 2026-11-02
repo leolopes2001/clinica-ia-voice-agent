@@ -158,7 +158,7 @@ worker ◄── RabbitMQ            Postgres 16 (pgvector + exclusion) ◄─�
 | Telefonia | Gateway GSM/4G com SIP (1 chip = 1 canal) | Converte a ligação do chip em SIP na rede local |
 | Mídia | `livekit-server` + `livekit-sip` (self-hosted) | Salas WebRTC e ponte SIP. Ambos exigem Redis |
 | Agente | Python 3.12, `google-adk[livekit]` ≥ 2.9, `livekit-agents` ≥ 1.4 | Conversa e orquestração de ferramentas. Modelo `gemini-live-2.5-flash-native-audio` |
-| MCP | SDK oficial `mcp` (FastMCP), transporte Streamable HTTP | `mcp-clinica` (agenda) e `mcp-conhecimento` (RAG) |
+| MCP | SDK oficial `mcp` 2.x (`MCPServer`, antigo FastMCP), transporte Streamable HTTP | `mcp-clinica` (agenda) e `mcp-conhecimento` (RAG) |
 | API | FastAPI, SQLAlchemy 2 async, asyncpg, Alembic, Pydantic v2 | Regras de negócio da agenda e dos cadastros |
 | Painel | FastAPI + Jinja2 + HTMX + SSE | Administração, todo em Python, sem build de front-end |
 | Worker | `aio-pika` | Consumidores RabbitMQ: indexação, expiração de holds, eventos, retenção |
@@ -331,7 +331,7 @@ O painel é servido pelo FastAPI com templates Jinja2 e HTMX, e recebe atualiza�
 | `api` | build `./services/api` | `127.0.0.1:${API_PORT:-8000}` | postgres, rabbitmq |
 | `painel` | build `./services/painel` | 8080 | api, rabbitmq |
 | `mcp-clinica` | build `./services/mcp_clinica` | — (rede interna) | api |
-| `mcp-conhecimento` | build `./services/mcp_conhecimento` | — (rede interna) | postgres |
+| `mcp-conhecimento` | build `./services/mcp_conhecimento` | — (rede interna) | api, postgres |
 | `agent` | build `./services/agent` | — | livekit, MCPs |
 | `worker` | build `./services/worker` | — | postgres, rabbitmq |
 
@@ -343,7 +343,8 @@ Como o gateway está na mesma rede local, as portas SIP não precisam ser aberta
 clinica-voz/
 ├── docker-compose.yml
 ├── .env.example
-├── docs/                 # spec.md (este documento)
+├── docs/                 # spec.md (este documento), testar-fase2.md
+├── exemplos/             # base de conhecimento da clínica fictícia
 ├── infra/                # livekit.yaml, sip.yaml
 ├── scripts/              # bootstrap_sip.sh, seed.py
 ├── packages/
@@ -384,7 +385,7 @@ São 7 fases, cada uma terminando em algo que roda e pode ser testado. As fases 
 - [x] T2.2 Pipeline de ingestão no worker (extração, chunking, embeddings, gravação).
 - [x] T2.3 `mcp-conhecimento` com busca híbrida e RRF.
 - [x] T2.4 Conjunto de 30 perguntas de avaliação. *Pronto quando:* o trecho certo aparece no top 3 em ≥ 90% delas.
-- [ ] T2.5 Testar os dois MCPs com o MCP Inspector e com um agente ADK em modo texto (`adk web`).
+- [x] T2.5 Testar os dois MCPs com o MCP Inspector e com um agente ADK em modo texto (`adk web`).
 
 **Fase 3 — Agente de voz (sem telefone)**
 
@@ -437,6 +438,8 @@ São 7 fases, cada uma terminando em algo que roda e pode ser testado. As fases 
 - **Dependência de internet:** sem internet não há Gemini Live, e a ligação precisa cair numa mensagem gravada ou ser desviada para a recepção. Isso está previsto no runbook (T6.4).
 - **Rede móvel:** as operadoras vêm desligando 2G/3G. Compre um gateway com 4G e VoLTE e confirme a compatibilidade com a operadora do chip.
 - **Qualidade de áudio do celular (8 kHz):** números e nomes podem ser mal entendidos. Mitigação: o agente sempre repete datas, horários e nomes antes de confirmar (Constituição, item 4).
+- **Latência da busca RAG:** em 02/11/2026, a busca completa mediu mediana de 467 ms e p95 de 764 ms, contra a meta de p95 ≤ 300 ms. Quase todo o tempo é do embedding no Gemini (mediana de 472 ms e p95 de 667 ms, medidos em separado). A consulta ao banco pesa pouco, então a meta só seria atingida com outra rede ou com um modelo de embedding local, que é uma decisão em aberto.
+- **Modelo de voz:** `gemini-live-2.5-flash-native-audio` não aparece na lista de modelos da chave atual da API do Gemini, e o `gemini-2.5-flash` já responde 404 para ela. Confirmar o modelo antes da T3.1.
 - **Uso do chip pela operadora:** algumas operadoras restringem o uso de chips pré-pagos em gateways. Verifique o contrato e prefira um plano empresarial.
 
 ## Decisões tomadas pelo agente
@@ -475,3 +478,6 @@ Decisões técnicas tomadas durante a implementação, com a opção mais conser
 | T2.3 | O servidor abre as transações em modo somente leitura, e a clínica vem sempre de `chamadas.clinica_id`, ignorando `X-Clinica-Id`. | Garante no banco o "somente leitura" do contrato, e o LLM não influi na clínica. |
 | T2.4 | A base da clínica fictícia fica em `exemplos/conhecimento/*.md`, e as 30 perguntas em `tests/avaliacao/perguntas.json`. Uma pergunta só conta como acerto se o documento certo vier no top 3 e a resposta esperada estiver no texto devolvido, já recortado em 800 caracteres. | É mais rígido que o critério da spec e mede o que o agente de fato recebe. |
 | T2.4 | A avaliação usa os embeddings reais e é ignorada sem `GOOGLE_API_KEY`. O repositório ainda não tem CI: quando tiver, a chave precisa estar nos segredos dele. | O resultado com embeddings falsos não mediria nada. |
+| T2.5 | O `scripts/seed.py` foi antecipado da T3.4, porque o teste dos MCPs precisa de dados. Ele já cobre o que a T3.4 pede e também indexa a base de exemplo. | Evita um seed temporário só para a Fase 2. O almoço vira um bloqueio por dia útil nos próximos 90 dias, porque `bloqueios` não é recorrente, e rodar o seed de novo estende a janela. |
+| T2.5 | O agente de texto (`services/agent/adk_texto`) usa `header_provider` do `McpToolset` para enviar o `X-Chamada-Id`, com um prompt mínimo. O modelo padrão é `gemini-flash-latest`, porque o `gemini-2.5-flash` responde 404 para esta chave. | Valida na prática o mecanismo de headers dinâmicos que a Fase 3 vai usar. |
+| T2.5 | O `mcp-conhecimento` também depende de `api` saudável no Compose. | As tabelas vêm das migrations, aplicadas pela API ao subir. É o mesmo motivo do worker. |
