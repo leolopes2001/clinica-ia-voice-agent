@@ -1,3 +1,4 @@
+from pathlib import Path
 from urllib.parse import quote
 
 from pydantic import Field, SecretStr
@@ -42,3 +43,17 @@ class ConfigAgenda(BaseSettings):
 
     antecedencia_minima_min: int = Field(default=120, ge=0)
     duracao_hold_min: int = Field(default=3, ge=1)
+
+
+class ConfigEmbeddings(BaseSettings):
+    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+
+    google_api_key: SecretStr | None = None
+    embedding_modelo: str = "gemini-embedding-001"
+
+
+class ConfigConhecimento(BaseSettings):
+    model_config = SettingsConfigDict(env_prefix="CONHECIMENTO_", env_file=".env", extra="ignore")
+
+    # Volume onde o painel salva os arquivos enviados.
+    dir: Path = Path("/dados/conhecimento")

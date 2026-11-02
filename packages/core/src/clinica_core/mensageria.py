@@ -30,6 +30,10 @@ class HoldSegurado(BaseModel):
     hold_id: UUID
 
 
+class IndexarDocumento(BaseModel):
+    documento_id: UUID
+
+
 async def conectar(config: ConfigRabbit) -> AbstractRobustConnection:
     return await aio_pika.connect_robust(config.url)
 

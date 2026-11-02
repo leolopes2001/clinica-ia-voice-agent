@@ -86,6 +86,15 @@ def test_mcp_clinica_so_na_rede_interna(configuracao: dict[str, Any]) -> None:
     assert configuracao["mcp-clinica"]["depends_on"]["api"]["condition"] == "service_healthy"
 
 
+def test_worker_recebe_a_chave_e_o_volume_da_base(configuracao: dict[str, Any]) -> None:
+    worker = configuracao["worker"]
+    assert "GOOGLE_API_KEY" in worker["environment"]
+    assert worker["environment"]["CONHECIMENTO_DIR"] == "/dados/conhecimento"
+    assert [(v["source"], v["target"]) for v in worker["volumes"]] == [
+        ("conhecimento_arquivos", "/dados/conhecimento")
+    ]
+
+
 def test_worker_depende_de_api_postgres_e_rabbitmq_saudaveis(
     configuracao: dict[str, Any],
 ) -> None:

@@ -381,7 +381,7 @@ São 7 fases, cada uma terminando em algo que roda e pode ser testado. As fases 
 **Fase 2 — Servidores MCP e RAG**
 
 - [x] T2.1 `POST /chamadas` e os endpoints de identidade na API (identificar, selecionar, cadastrar e verificar), e `mcp-clinica` com as 12 ferramentas, resolvendo identidade pelo `X-Chamada-Id`. Em `listar_horarios_livres`, filtrar por `turno` e depois escolher as até 3 opções variadas entre os candidatos.
-- [ ] T2.2 Pipeline de ingestão no worker (extração, chunking, embeddings, gravação).
+- [x] T2.2 Pipeline de ingestão no worker (extração, chunking, embeddings, gravação).
 - [ ] T2.3 `mcp-conhecimento` com busca híbrida e RRF.
 - [ ] T2.4 Conjunto de 30 perguntas de avaliação. *Pronto quando:* o trecho certo aparece no top 3 em ≥ 90% delas.
 - [ ] T2.5 Testar os dois MCPs com o MCP Inspector e com um agente ADK em modo texto (`adk web`).
@@ -461,3 +461,10 @@ Decisões técnicas tomadas durante a implementação, com a opção mais conser
 | T2.1 | O protocolo do pedido de retorno tem 8 dígitos aleatórios. | O agente precisa falar o protocolo em voz alta. |
 | T2.1 | Na falha de `segurar_horario`, o MCP devolve em `alternativas` só as até 3 opções faladas. A rota `/holds` continua devolvendo todos os candidatos. | Reduz o que o modelo precisa ler durante a ligação. |
 | T2.1 | `pacientes.consentimento_em` continua nulo no cadastro por voz, porque ainda não há ferramenta nem fluxo que registrem o consentimento. | Não marcar um consentimento que ninguém coletou. O registro precisa ser definido junto com o prompt da T3.2. |
+| T2.2 | A contagem de tokens é uma estimativa: cerca de 4 caracteres por token, ou seja, trechos de até 2000 caracteres e sobreposição de até 300, em frases inteiras. | "Cerca de 500 tokens" não pede precisão, e isso dispensa um tokenizador. |
+| T2.2 | Um título nunca fica no meio de um trecho, e cada trecho começa com o caminho de títulos ("Preços > Limpeza"). Seções curtas não são juntadas. | Melhora a precisão da busca: o trecho leva o contexto do título. |
+| T2.2 | Os embeddings são gerados antes da transação. Na mesma transação, o worker apaga os trechos antigos e grava os novos. Se a indexação falhar, os trechos antigos ficam valendo e o documento fica com status `erro`. | A busca nunca vê um documento pela metade, e o banco não fica preso a uma chamada de rede. |
+| T2.2 | Falha ao indexar vai para `conhecimento.indexar.dlq`, sem voltar à fila, depois das tentativas do próprio cliente do Gemini (até 5). | Segue a regra usada em `holds.expirar`. |
+| T2.2 | A indexação usa um canal próprio, com `prefetch=1`. | Um documento por vez respeita o limite de requisições do Gemini e não atrasa a expiração de holds. |
+| T2.2 | Sem `GOOGLE_API_KEY`, o worker sobe normalmente e só a indexação falha. | A expiração de holds não pode depender da chave. |
+| T2.2 | A indexação só lê arquivos. Um documento com `arquivo` nulo fica com status `erro`. | A T5.4 precisa salvar como arquivo no volume o texto editado no painel, porque a tabela não tem coluna de texto. |

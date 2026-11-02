@@ -95,6 +95,11 @@ services:
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_USER: ${RABBITMQ_USER:-clinica}
       RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:-clinica}
+      GOOGLE_API_KEY: ${GOOGLE_API_KEY:-}
+      EMBEDDING_MODELO: ${EMBEDDING_MODELO:-gemini-embedding-001}
+      CONHECIMENTO_DIR: /dados/conhecimento
+    volumes:
+      - conhecimento_arquivos:/dados/conhecimento
     depends_on:
       # As tabelas vêm das migrations, aplicadas pela API ao subir.
       api:
@@ -135,3 +140,4 @@ services:
 volumes:
   postgres_data:
   rabbitmq_data:
+  conhecimento_arquivos:
