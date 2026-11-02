@@ -35,6 +35,7 @@ class Estado:
     ultimo_som: float = 0.0
     primeiro_som_depois_da_fala: float | None = None
     fim_da_fala: float | None = None
+    duracao_da_resposta: float = 0.0
     latencias: list[float] = field(default_factory=list)
     terminou_de_falar: asyncio.Event = field(default_factory=asyncio.Event)
     ferramentas: list[str] = field(default_factory=list)
@@ -67,6 +68,8 @@ async def _ouvir(faixa: rtc.Track, estado: Estado) -> None:
         if amostras.size and np.sqrt(np.mean(amostras.astype(np.float64) ** 2)) > LIMIAR_DE_SOM:
             agora = time.monotonic()
             estado.ultimo_som = agora
+            if estado.primeiro_som_depois_da_fala is not None:
+                estado.duracao_da_resposta = agora - estado.primeiro_som_depois_da_fala
             if estado.fim_da_fala is not None and estado.primeiro_som_depois_da_fala is None:
                 estado.primeiro_som_depois_da_fala = agora
                 latencia = agora - estado.fim_da_fala
@@ -166,6 +169,7 @@ async def conversar(telefone: str, falas: list[str], voz: str) -> list[float]:
         await estado.terminou_de_falar.wait()
         await _esperar_fim_do_turno(estado)
     await asyncio.sleep(1.0)
+    print(f"[última resposta: {estado.duracao_da_resposta:.1f} s de áudio]", flush=True)
     await sala.disconnect()
     for tarefa in tarefas:
         tarefa.cancel()

@@ -3,6 +3,7 @@ import logging
 from datetime import UTC, datetime, timedelta
 
 import httpx
+from google.adk.agents.run_config import RunConfig
 from google.adk.events import Event
 from google.adk.integrations.livekit import LiveKitRunner  # type: ignore[attr-defined]
 from google.adk.runners import Runner
@@ -28,6 +29,8 @@ _LIGACAO_ATENDIDA = "[A ligação acabou de ser atendida. Fale agora a sua abert
 PROCESSOS_OCIOSOS = 2
 # Uma ligação não dura tanto: o que passou disso é de um processo que morreu no meio.
 _IDADE_DE_SESSAO_ABANDONADA = timedelta(days=1)
+
+CONFIG_DE_VOZ = RunConfig(speech_config=types.SpeechConfig(language_code="pt-BR"))
 
 server = AgentServer(num_idle_processes=PROCESSOS_OCIOSOS)
 
@@ -109,6 +112,7 @@ async def atender(ctx: JobContext) -> None:
             user_id=USUARIO_ADK,
             session_id=ctx.room.name,
             create_session=False,
+            run_config=CONFIG_DE_VOZ,
         ).start()
     finally:
         try:
