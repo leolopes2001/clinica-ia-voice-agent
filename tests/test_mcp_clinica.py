@@ -35,6 +35,7 @@ from clinica_mcp_clinica.servidor import criar_app, criar_servidor
 FUSO = ZoneInfo("America/Sao_Paulo")
 TELEFONE = "+5511900000001"
 FERRAMENTAS = {
+    "registrar_consentimento",
     "identificar_chamador",
     "selecionar_paciente",
     "cadastrar_paciente",
@@ -155,7 +156,11 @@ async def c(fabrica: Fabrica) -> Cenario:
 
 
 async def _nova_chamada(
-    http_api: httpx.AsyncClient, c: Cenario, telefone: str = TELEFONE, sala: str | None = None
+    http_api: httpx.AsyncClient,
+    c: Cenario,
+    telefone: str = TELEFONE,
+    sala: str | None = None,
+    consentiu: bool = True,
 ) -> str:
     resposta = await http_api.post(
         "/chamadas",
@@ -164,6 +169,13 @@ async def _nova_chamada(
     )
     assert resposta.status_code == 201, resposta.text
     chamada_id: str = resposta.json()["chamada_id"]
+    if consentiu:
+        registrado = await http_api.post(
+            "/chamadas/consentimento",
+            headers={"X-Chamada-Id": chamada_id},
+            json={"aceitou": True},
+        )
+        assert registrado.json() == {"consentimento": True}
     return chamada_id
 
 
@@ -213,7 +225,7 @@ async def _quantos_confirmados(fabrica: Fabrica, chamada_id: str) -> int:
 # ---- Contrato
 
 
-async def test_expoe_as_12_ferramentas_sem_telefone_nem_clinica() -> None:
+async def test_expoe_as_13_ferramentas_sem_telefone_nem_clinica() -> None:
     servidor = criar_servidor(httpx.AsyncClient())
     ferramentas = await servidor.list_tools()
     assert {f.name for f in ferramentas} == FERRAMENTAS
@@ -819,3 +831,107 @@ async def test_pedido_de_retorno_usa_telefone_da_ligacao_e_e_idempotente(
 async def test_lista_as_clinicas_para_o_agente(http_api: httpx.AsyncClient, c: Cenario) -> None:
     corpo = (await http_api.get("/clinicas")).json()
     assert str(c.clinica_id) in [clinica["clinica_id"] for clinica in corpo["clinicas"]]
+
+
+# ---- Consentimento (H1)
+
+
+PROTEGIDAS: list[tuple[str, dict[str, Any]]] = [
+    ("identificar_chamador", {}),
+    ("selecionar_paciente", {"paciente_id": str(uuid4())}),
+    ("cadastrar_paciente", {"nome": "Nova Pessoa", "data_nascimento": "1990-01-01"}),
+    ("verificar_identidade", {"data_nascimento": "1990-01-01"}),
+    (
+        "segurar_horario",
+        {"procedimento": "Limpeza", "dentista": "Ana", "inicio": "2031-01-06T14:00:00-03:00"},
+    ),
+    ("confirmar_agendamento", {"hold_id": str(uuid4())}),
+    ("listar_meus_agendamentos", {}),
+    ("remarcar_agendamento", {"agendamento_id": str(uuid4()), "hold_id": str(uuid4())}),
+    ("cancelar_agendamento", {"agendamento_id": str(uuid4())}),
+    ("registrar_pedido_retorno", {"motivo": "retorno"}),
+]
+
+
+@pytest.mark.parametrize(("ferramenta", "argumentos"), PROTEGIDAS)
+@pytest.mark.parametrize("resposta", [None, False])
+async def test_sem_consentimento_a_api_recusa(
+    http_api: httpx.AsyncClient,
+    app_mcp: httpx.AsyncClient,
+    c: Cenario,
+    ferramenta: str,
+    argumentos: dict[str, Any],
+    resposta: bool | None,
+) -> None:
+    chamada_id = await _nova_chamada(http_api, c, consentiu=False)
+    async with _na_chamada(app_mcp, chamada_id) as cliente:
+        if resposta is not None:
+            await _ferramenta(cliente, "registrar_consentimento", aceitou=resposta)
+        corpo = await _ferramenta(cliente, ferramenta, **argumentos)
+    assert corpo == {"ok": False, "motivo": "consentimento_ausente"}
+
+
+async def test_sem_consentimento_ainda_tira_duvidas(
+    http_api: httpx.AsyncClient, app_mcp: httpx.AsyncClient, c: Cenario
+) -> None:
+    chamada_id = await _nova_chamada(http_api, c, consentiu=False)
+    async with _na_chamada(app_mcp, chamada_id) as cliente:
+        assert (await _ferramenta(cliente, "listar_procedimentos"))["ok"] is True
+
+
+async def test_consentimento_e_recusa_ficam_na_chamada(
+    http_api: httpx.AsyncClient, app_mcp: httpx.AsyncClient, c: Cenario, fabrica: Fabrica
+) -> None:
+    aceita = await _nova_chamada(http_api, c, consentiu=False)
+    recusa = await _nova_chamada(http_api, c, consentiu=False)
+    async with _na_chamada(app_mcp, aceita) as cliente:
+        corpo = await _ferramenta(cliente, "registrar_consentimento", aceitou=True)
+        assert corpo["consentimento"] is True
+    async with _na_chamada(app_mcp, recusa) as cliente:
+        corpo = await _ferramenta(cliente, "registrar_consentimento", aceitou=False)
+        assert corpo["consentimento"] is False
+    async with fabrica() as sessao:
+        chamada_aceita = await sessao.get_one(Chamada, UUID(aceita))
+        chamada_recusa = await sessao.get_one(Chamada, UUID(recusa))
+    assert chamada_aceita.consentimento_em is not None
+    assert chamada_aceita.consentimento_recusado_em is None
+    assert chamada_recusa.consentimento_em is None
+    assert chamada_recusa.consentimento_recusado_em is not None
+
+
+async def test_recusa_vale_ate_o_fim_da_chamada(
+    http_api: httpx.AsyncClient, app_mcp: httpx.AsyncClient, c: Cenario
+) -> None:
+    chamada_id = await _nova_chamada(http_api, c, consentiu=False)
+    async with _na_chamada(app_mcp, chamada_id) as cliente:
+        await _ferramenta(cliente, "registrar_consentimento", aceitou=False)
+        corpo = await _ferramenta(cliente, "registrar_consentimento", aceitou=True)
+        assert corpo["consentimento"] is False
+        corpo = await _ferramenta(cliente, "identificar_chamador")
+    assert corpo["motivo"] == "consentimento_ausente"
+
+
+async def test_recusar_depois_de_aceitar_desfaz_a_selecao(
+    http_api: httpx.AsyncClient, app_mcp: httpx.AsyncClient, c: Cenario, fabrica: Fabrica
+) -> None:
+    chamada_id = await _nova_chamada(http_api, c)
+    async with _na_chamada(app_mcp, chamada_id) as cliente:
+        await _ferramenta(cliente, "selecionar_paciente", paciente_id=str(c.maria))
+        await _ferramenta(cliente, "registrar_consentimento", aceitou=False)
+    async with fabrica() as sessao:
+        chamada = await sessao.get_one(Chamada, UUID(chamada_id))
+    assert chamada.paciente_id is None
+    assert chamada.consentimento_em is None
+
+
+async def test_cadastro_por_voz_grava_o_consentimento(
+    http_api: httpx.AsyncClient, app_mcp: httpx.AsyncClient, c: Cenario, fabrica: Fabrica
+) -> None:
+    chamada_id = await _nova_chamada(http_api, c)
+    async with _na_chamada(app_mcp, chamada_id) as cliente:
+        corpo = await _ferramenta(
+            cliente, "cadastrar_paciente", nome="Nova Pessoa", data_nascimento="1990-01-01"
+        )
+    async with fabrica() as sessao:
+        paciente = await sessao.get_one(Paciente, UUID(corpo["paciente_id"]))
+    assert paciente.consentimento_em is not None

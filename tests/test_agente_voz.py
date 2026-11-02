@@ -1,9 +1,12 @@
 import json
 from datetime import UTC, datetime
+from typing import Any
 from uuid import uuid4
 
 import httpx
 import pytest
+from google.adk.events import Event
+from google.genai import types
 
 from clinica_agent.chamada import (
     ChamadaAberta,
@@ -14,6 +17,7 @@ from clinica_agent.chamada import (
 )
 from clinica_agent.config import ConfigAgente
 from clinica_agent.recepcionista import cabecalhos_da_chamada, criar_agente, montar_prompt
+from clinica_agent.resumo import resumir
 
 TELEFONE = "+5511900000001"
 
@@ -92,3 +96,85 @@ def test_modelo_vem_da_configuracao() -> None:
     agente = criar_agente(config, chamada)
     assert agente.model == "modelo-da-config"
     assert len(agente.tools) == 3
+
+
+# ---- Prompt (T3.2)
+
+
+@pytest.mark.parametrize(
+    "regra",
+    [
+        "Você autoriza?",
+        "registrar_consentimento",
+        "explícito",
+        "Nunca invente preço",
+        "não dá diagnóstico",
+        "no máximo 3",
+        "acabou de ser ocupado",
+        "não tem essa informação",
+        "end_call",
+    ],
+)
+def test_prompt_traz_as_regras(regra: str) -> None:
+    assert regra in montar_prompt("Clínica X", datetime(2026, 11, 3, tzinfo=UTC))
+
+
+def test_prompt_nao_deixa_marcador_sem_trocar() -> None:
+    texto = montar_prompt("Clínica X", datetime(2026, 11, 3, tzinfo=UTC))
+    assert "{" not in texto
+
+
+# ---- Resumo da ligação
+
+
+def _falou(texto: str) -> Event:
+    return Event(author="user", input_transcription=types.Transcription(text=texto))
+
+
+def _agente_falou(texto: str) -> Event:
+    return Event(author="recepcionista", output_transcription=types.Transcription(text=texto))
+
+
+def _resposta(nome: str, resultado: dict[str, Any]) -> Event:
+    envelope = {"content": [{"type": "text", "text": json.dumps(resultado)}]}
+    resposta = types.FunctionResponse(name=nome, response=envelope)
+    return Event(
+        author="recepcionista",
+        content=types.Content(role="user", parts=[types.Part(function_response=resposta)]),
+    )
+
+
+CONSENTIU = _resposta("registrar_consentimento", {"ok": True, "consentimento": True})
+RECUSOU = _resposta("registrar_consentimento", {"ok": True, "consentimento": False})
+
+
+def test_resumo_com_consentimento_traz_a_transcricao_em_ordem() -> None:
+    resumo = resumir([_agente_falou("Autoriza?"), _falou("Sim"), CONSENTIU])
+    assert resumo.transcricao == "Recepcionista: Autoriza?\nPaciente: Sim"
+    assert resumo.desfecho == "duvida"
+
+
+@pytest.mark.parametrize("eventos", [[RECUSOU], [], [CONSENTIU, RECUSOU]])
+def test_resumo_sem_consentimento_nao_leva_a_transcricao(eventos: list[Event]) -> None:
+    assert resumir([_falou("Meu dente dói"), *eventos]).transcricao is None
+
+
+def test_ninguem_falou_e_abandono() -> None:
+    assert resumir([_agente_falou("Olá")]).desfecho == "abandonou"
+
+
+@pytest.mark.parametrize(
+    ("ferramenta", "desfecho"),
+    [
+        ("confirmar_agendamento", "agendou"),
+        ("remarcar_agendamento", "remarcou"),
+        ("cancelar_agendamento", "cancelou"),
+    ],
+)
+def test_desfecho_vem_da_ferramenta_que_deu_certo(ferramenta: str, desfecho: str) -> None:
+    assert resumir([_falou("oi"), _resposta(ferramenta, {"ok": True})]).desfecho == desfecho
+
+
+def test_ferramenta_que_falhou_nao_vira_desfecho() -> None:
+    falha = _resposta("confirmar_agendamento", {"ok": False, "motivo": "hold_perdido"})
+    assert resumir([_falou("oi"), falha]).desfecho == "duvida"

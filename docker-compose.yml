@@ -98,6 +98,7 @@ services:
       GOOGLE_API_KEY: ${GOOGLE_API_KEY:-}
       EMBEDDING_MODELO: ${EMBEDDING_MODELO:-gemini-embedding-001}
       CONHECIMENTO_DIR: /dados/conhecimento
+      RETENCAO_TRANSCRICAO_DIAS: ${RETENCAO_TRANSCRICAO_DIAS:-90}
     volumes:
       - conhecimento_arquivos:/dados/conhecimento
     depends_on:
@@ -204,6 +205,9 @@ services:
       GOOGLE_API_KEY: ${GOOGLE_API_KEY:-}
       AGENTE_MODELO_VOZ: ${AGENTE_MODELO_VOZ:-gemini-3.1-flash-live-preview}
       AGENTE_API_URL: http://api:8000
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_USER: ${RABBITMQ_USER:-clinica}
+      RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:-clinica}
       AGENTE_MCP_CLINICA_URL: http://mcp-clinica:8000/mcp
       AGENTE_MCP_CONHECIMENTO_URL: http://mcp-conhecimento:8000/mcp
       # Só o teste pelo navegador usa. Na ligação real, o telefone vem do SIP (T4.6).
@@ -216,6 +220,8 @@ services:
       mcp-clinica:
         condition: service_healthy
       mcp-conhecimento:
+        condition: service_healthy
+      rabbitmq:
         condition: service_healthy
     healthcheck:
       test:

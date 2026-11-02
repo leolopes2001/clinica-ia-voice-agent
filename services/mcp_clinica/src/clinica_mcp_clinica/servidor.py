@@ -88,8 +88,19 @@ def criar_servidor(api: httpx.AsyncClient) -> MCPServer:
         return retorno
 
     @mcp.tool()
+    async def registrar_consentimento(aceitou: bool, ctx: Context) -> dict[str, Any]:
+        """Grava na chamada a resposta da pessoa ao pedido de consentimento. Vem antes de todas.
+
+        Sem consentimento, as ferramentas de identidade e as que mudam a agenda respondem com o
+        motivo consentimento_ausente. A recusa vale até o fim da ligação.
+        """
+        return await chamar(ctx, "POST", "/chamadas/consentimento", corpo={"aceitou": aceitou})
+
+    @mcp.tool()
     async def identificar_chamador(ctx: Context) -> dict[str, Any]:
         """Lista os pacientes do telefone da ligação: paciente_id e primeiro_nome.
+
+        Só depois de registrar_consentimento responder com consentimento verdadeiro.
 
         A lista vem vazia se o telefone não tiver cadastro. Com um único paciente, ele já fica
         selecionado na chamada. Com mais de um, pergunte para quem é a consulta e use

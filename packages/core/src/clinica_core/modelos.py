@@ -174,6 +174,8 @@ class Chamada(Base):
     paciente_id: Mapped[UUID | None] = mapped_column(ForeignKey("pacientes.id"))
     identidade_verificada_em: Mapped[datetime | None]
     tentativas_identidade: Mapped[int] = mapped_column(server_default=text("0"))
+    consentimento_em: Mapped[datetime | None]
+    consentimento_recusado_em: Mapped[datetime | None]
 
 
 class Agendamento(Base):

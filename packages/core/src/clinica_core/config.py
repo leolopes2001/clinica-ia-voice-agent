@@ -45,6 +45,12 @@ class ConfigAgenda(BaseSettings):
     duracao_hold_min: int = Field(default=3, ge=1)
 
 
+class ConfigRetencao(BaseSettings):
+    model_config = SettingsConfigDict(env_prefix="RETENCAO_", env_file=".env", extra="ignore")
+
+    transcricao_dias: int = Field(default=90, ge=1)
+
+
 class ConfigEmbeddings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 

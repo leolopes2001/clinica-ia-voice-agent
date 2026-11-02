@@ -6,18 +6,25 @@ from pathlib import Path
 from aio_pika.abc import AbstractChannel, AbstractIncomingMessage
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from clinica_core.config import ConfigConhecimento, ConfigEmbeddings, ConfigPostgres, ConfigRabbit
+from clinica_core.config import (
+    ConfigConhecimento,
+    ConfigEmbeddings,
+    ConfigPostgres,
+    ConfigRabbit,
+    ConfigRetencao,
+)
 from clinica_core.db import criar_engine, criar_fabrica_sessoes
 from clinica_core.embeddings import GeminiEmbeddings, GeradorEmbeddings
 from clinica_core.eventos import publicar_eventos
 from clinica_core.mensageria import (
+    FILA_CHAMADA_ENCERRADA,
     FILA_CONHECIMENTO_INDEXAR,
     FILA_HOLDS_EXPIRAR,
     abrir_canal,
     conectar,
     declarar_topologia,
 )
-from clinica_worker import conhecimento
+from clinica_worker import chamadas, conhecimento
 from clinica_worker.holds import expirar_vencidos, processar_mensagem
 
 logger = logging.getLogger(__name__)
@@ -77,6 +84,14 @@ async def rodar(
         await canal_indexacao.set_qos(prefetch_count=1)
         fila_indexacao = await canal_indexacao.get_queue(FILA_CONHECIMENTO_INDEXAR)
         await fila_indexacao.consume(consumir_indexacao)
+
+        retencao = ConfigRetencao()
+
+        async def consumir_encerramento(mensagem: AbstractIncomingMessage) -> None:
+            await chamadas.processar_mensagem(fabrica, retencao, mensagem)
+
+        fila_encerramento = await canal.get_queue(FILA_CHAMADA_ENCERRADA)
+        await fila_encerramento.consume(consumir_encerramento)
         while not parar.is_set():
             await _varrer(fabrica, canal, arquivo_vivo)
             try:
