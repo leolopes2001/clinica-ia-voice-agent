@@ -17,6 +17,7 @@ from clinica_api.esquemas import (
     AgendamentoCancelado,
     AgendamentoConfirmado,
     CadastrarPacienteEntrada,
+    CancelamentoPreparado,
     CancelarEntrada,
     ChamadaCriada,
     Clinicas,
@@ -36,6 +37,7 @@ from clinica_api.esquemas import (
     PedidoRetornoCriado,
     PedidoRetornoEntrada,
     Procedimentos,
+    RemarcacaoPreparada,
     RemarcarEntrada,
     ResultadoVerificacao,
     SegurarEntrada,
@@ -175,6 +177,21 @@ def criar_app(
         chave: ChaveIdempotencia,
     ) -> AgendamentoConfirmado:
         return await agenda.confirmar(sessao, contexto, hold_id, entrada, chave, publicador_agenda)
+
+    @app.post("/agendamentos/{agendamento_id}/remarcar/preparar")
+    async def preparar_remarcacao(
+        agendamento_id: UUID,
+        entrada: RemarcarEntrada,
+        sessao: Sessao,
+        contexto: ContextoComConsentimento,
+    ) -> RemarcacaoPreparada:
+        return await voz.preparar_remarcacao(sessao, contexto, agendamento_id, entrada)
+
+    @app.post("/agendamentos/{agendamento_id}/cancelar/preparar")
+    async def preparar_cancelamento(
+        agendamento_id: UUID, sessao: Sessao, contexto: ContextoComConsentimento
+    ) -> CancelamentoPreparado:
+        return await voz.preparar_cancelamento(sessao, contexto, agendamento_id)
 
     @app.post("/agendamentos/{agendamento_id}/remarcar")
     async def remarcar(

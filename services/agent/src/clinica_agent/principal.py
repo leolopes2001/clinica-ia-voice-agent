@@ -1,6 +1,9 @@
 import asyncio
+import contextlib
 import logging
+from collections.abc import AsyncGenerator
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
 import httpx
 from google.adk.agents.run_config import RunConfig
@@ -17,6 +20,7 @@ from clinica_agent.config import ConfigAgente
 from clinica_agent.encerramento import publicar_encerramento
 from clinica_agent.recepcionista import criar_agente
 from clinica_agent.resumo import resumir
+from clinica_agent.trava import TravaDeConfirmacao
 from clinica_core.config import ConfigRabbit, ConfigSessoesAdk
 
 logger = logging.getLogger(__name__)
@@ -29,6 +33,20 @@ _LIGACAO_ATENDIDA = "[A ligação acabou de ser atendida. Fale agora a sua abert
 PROCESSOS_OCIOSOS = 2
 # Uma ligação não dura tanto: o que passou disso é de um processo que morreu no meio.
 _IDADE_DE_SESSAO_ABANDONADA = timedelta(days=1)
+
+
+class RunnerObservado(Runner):
+    """Entrega à trava cada evento ao vivo, inclusive os parciais, que não entram na sessão."""
+
+    def __init__(self, *, trava_de_confirmacao: TravaDeConfirmacao, **argumentos: Any) -> None:
+        super().__init__(**argumentos)
+        self._trava_de_confirmacao = trava_de_confirmacao
+
+    async def run_live(self, *args: Any, **argumentos: Any) -> AsyncGenerator[Event, None]:
+        async with contextlib.aclosing(super().run_live(*args, **argumentos)) as eventos:
+            async for evento in eventos:
+                self._trava_de_confirmacao.observar(evento)
+                yield evento
 
 
 def config_de_voz(config: ConfigAgente) -> RunConfig:
@@ -114,7 +132,13 @@ async def atender(ctx: JobContext) -> None:
 
     servico = DatabaseSessionService(ConfigSessoesAdk().url)
     await _preparar_sessao(servico, ctx.room.name, chamada.chamada_id)
-    runner = Runner(agent=criar_agente(config, chamada), app_name=APP, session_service=servico)
+    trava = TravaDeConfirmacao()
+    runner = RunnerObservado(
+        trava_de_confirmacao=trava,
+        agent=criar_agente(config, chamada, trava),
+        app_name=APP,
+        session_service=servico,
+    )
     try:
         await LiveKitRunner(
             runner=runner,

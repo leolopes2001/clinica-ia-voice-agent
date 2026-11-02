@@ -356,7 +356,7 @@ def exigir_identidade(contexto: Contexto) -> None:
         raise ErroAgenda("identidade_nao_verificada")
 
 
-async def _consulta_alteravel(
+async def consulta_alteravel(
     sessao: AsyncSession, contexto: Contexto, agendamento_id: UUID
 ) -> Agendamento:
     agendamento = await sessao.scalar(
@@ -405,7 +405,7 @@ async def remarcar(
             return AgendamentoConfirmado.model_validate(guardada)
 
         exigir_identidade(contexto)
-        antigo = await _consulta_alteravel(sessao, contexto, agendamento_id)
+        antigo = await consulta_alteravel(sessao, contexto, agendamento_id)
         assert antigo.paciente_id is not None
         recursos = await _recursos_do_hold(sessao, contexto, entrada.hold_id)
         await travar(sessao, *recursos, antigo.dentista_id, antigo.consultorio_id)
@@ -435,7 +435,7 @@ async def cancelar(
             return AgendamentoCancelado.model_validate(guardada)
 
         exigir_identidade(contexto)
-        agendamento = await _consulta_alteravel(sessao, contexto, agendamento_id)
+        agendamento = await consulta_alteravel(sessao, contexto, agendamento_id)
         inicio = _inicio(agendamento)
         cancelada = await _cancelar_consulta(sessao, agendamento_id, entrada.motivo)
         horas = (

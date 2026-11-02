@@ -45,8 +45,10 @@ FERRAMENTAS = {
     "segurar_horario",
     "confirmar_agendamento",
     "listar_meus_agendamentos",
-    "remarcar_agendamento",
-    "cancelar_agendamento",
+    "preparar_remarcacao",
+    "executar_remarcacao",
+    "preparar_cancelamento",
+    "executar_cancelamento",
     "registrar_pedido_retorno",
 }
 Fabrica = async_sessionmaker[AsyncSession]
@@ -225,7 +227,7 @@ async def _quantos_confirmados(fabrica: Fabrica, chamada_id: str) -> int:
 # ---- Contrato
 
 
-async def test_expoe_as_13_ferramentas_sem_telefone_nem_clinica() -> None:
+async def test_expoe_as_15_ferramentas_sem_telefone_nem_clinica() -> None:
     servidor = criar_servidor(httpx.AsyncClient())
     ferramentas = await servidor.list_tools()
     assert {f.name for f in ferramentas} == FERRAMENTAS
@@ -754,10 +756,10 @@ async def test_listar_meus_so_do_paciente_verificado_e_remarcar(
 
         hold = await _segurar(cliente, c, c.h(14))
         novo = await _ferramenta(
-            cliente, "remarcar_agendamento", agendamento_id=antigo, hold_id=hold["hold_id"]
+            cliente, "executar_remarcacao", agendamento_id=antigo, hold_id=hold["hold_id"]
         )
         repetido = await _ferramenta(
-            cliente, "remarcar_agendamento", agendamento_id=antigo, hold_id=hold["hold_id"]
+            cliente, "executar_remarcacao", agendamento_id=antigo, hold_id=hold["hold_id"]
         )
     assert novo["ok"] and novo == repetido
     async with fabrica() as sessao:
@@ -774,12 +776,12 @@ async def test_cancelar_exige_identidade_e_traz_o_aviso(
     chamada_id = await _nova_chamada(http_api, c)
     async with _na_chamada(app_mcp, chamada_id) as cliente:
         await _ferramenta(cliente, "selecionar_paciente", paciente_id=str(c.maria))
-        negado = await _ferramenta(cliente, "cancelar_agendamento", agendamento_id=agendamento)
+        negado = await _ferramenta(cliente, "executar_cancelamento", agendamento_id=agendamento)
         assert negado == {"ok": False, "motivo": "identidade_nao_verificada"}
 
         await _ferramenta(cliente, "verificar_identidade", data_nascimento="1990-01-01")
         corpo = await _ferramenta(
-            cliente, "cancelar_agendamento", agendamento_id=agendamento, motivo="viagem"
+            cliente, "executar_cancelamento", agendamento_id=agendamento, motivo="viagem"
         )
     assert corpo["ok"]
     assert corpo["dentro_do_prazo"] is True
@@ -797,7 +799,7 @@ async def test_cancelar_consulta_de_outro_paciente_responde_inexistente(
     async with _na_chamada(app_mcp, chamada_id) as cliente:
         await _ferramenta(cliente, "selecionar_paciente", paciente_id=str(c.joao))
         await _ferramenta(cliente, "verificar_identidade", data_nascimento="2015-05-05")
-        corpo = await _ferramenta(cliente, "cancelar_agendamento", agendamento_id=agendamento)
+        corpo = await _ferramenta(cliente, "executar_cancelamento", agendamento_id=agendamento)
     assert corpo == {"ok": False, "motivo": "agendamento_nao_encontrado"}
 
 
@@ -847,8 +849,10 @@ PROTEGIDAS: list[tuple[str, dict[str, Any]]] = [
     ),
     ("confirmar_agendamento", {"hold_id": str(uuid4())}),
     ("listar_meus_agendamentos", {}),
-    ("remarcar_agendamento", {"agendamento_id": str(uuid4()), "hold_id": str(uuid4())}),
-    ("cancelar_agendamento", {"agendamento_id": str(uuid4())}),
+    ("executar_remarcacao", {"agendamento_id": str(uuid4()), "hold_id": str(uuid4())}),
+    ("executar_cancelamento", {"agendamento_id": str(uuid4())}),
+    ("preparar_remarcacao", {"agendamento_id": str(uuid4()), "hold_id": str(uuid4())}),
+    ("preparar_cancelamento", {"agendamento_id": str(uuid4())}),
     ("registrar_pedido_retorno", {"motivo": "retorno"}),
 ]
 
@@ -935,3 +939,86 @@ async def test_cadastro_por_voz_grava_o_consentimento(
     async with fabrica() as sessao:
         paciente = await sessao.get_one(Paciente, UUID(corpo["paciente_id"]))
     assert paciente.consentimento_em is not None
+
+
+# ---- Preparar remarcação e cancelamento (H5 e H6)
+
+
+async def test_preparar_cancelamento_so_le_e_traz_a_fala(
+    app_mcp: httpx.AsyncClient, http_api: httpx.AsyncClient, c: Cenario, fabrica: Fabrica
+) -> None:
+    agendamento = await _consulta_de_maria(app_mcp, http_api, c, c.h(15))
+    chamada_id = await _nova_chamada(http_api, c)
+    async with _na_chamada(app_mcp, chamada_id) as cliente:
+        await _ferramenta(cliente, "selecionar_paciente", paciente_id=str(c.maria))
+        negado = await _ferramenta(cliente, "preparar_cancelamento", agendamento_id=agendamento)
+        assert negado == {"ok": False, "motivo": "identidade_nao_verificada"}
+        await _ferramenta(cliente, "verificar_identidade", data_nascimento="1990-01-01")
+        corpo = await _ferramenta(cliente, "preparar_cancelamento", agendamento_id=agendamento)
+    assert corpo["fala"] == f"Limpeza, segunda, dia {c.dia.day}, às 15h, com Dra. Ana Souza"
+    assert corpo["dentro_do_prazo"] is True
+    assert corpo["politica_cancelamento_horas"] == 24
+    async with fabrica() as sessao:
+        assert (await sessao.get_one(Agendamento, UUID(agendamento))).status == "confirmado"
+
+
+async def test_preparar_cancelamento_de_outro_paciente_responde_inexistente(
+    app_mcp: httpx.AsyncClient, http_api: httpx.AsyncClient, c: Cenario
+) -> None:
+    agendamento = await _consulta_de_maria(app_mcp, http_api, c, c.h(16))
+    chamada_id = await _nova_chamada(http_api, c)
+    async with _na_chamada(app_mcp, chamada_id) as cliente:
+        await _ferramenta(cliente, "selecionar_paciente", paciente_id=str(c.joao))
+        await _ferramenta(cliente, "verificar_identidade", data_nascimento="2015-05-05")
+        corpo = await _ferramenta(cliente, "preparar_cancelamento", agendamento_id=agendamento)
+    assert corpo == {"ok": False, "motivo": "agendamento_nao_encontrado"}
+
+
+async def test_preparar_remarcacao_so_le_e_traz_os_dois_horarios(
+    app_mcp: httpx.AsyncClient, http_api: httpx.AsyncClient, c: Cenario, fabrica: Fabrica
+) -> None:
+    antigo = await _consulta_de_maria(app_mcp, http_api, c, c.h(13))
+    chamada_id = await _nova_chamada(http_api, c)
+    async with _na_chamada(app_mcp, chamada_id) as cliente:
+        await _ferramenta(cliente, "selecionar_paciente", paciente_id=str(c.maria))
+        await _ferramenta(cliente, "verificar_identidade", data_nascimento="1990-01-01")
+        hold = await _segurar(cliente, c, c.h(14))
+        corpo = await _ferramenta(
+            cliente, "preparar_remarcacao", agendamento_id=antigo, hold_id=hold["hold_id"]
+        )
+    assert corpo["fala_atual"] == f"Limpeza, segunda, dia {c.dia.day}, às 13h, com Dra. Ana Souza"
+    assert corpo["fala_nova"] == f"Limpeza, segunda, dia {c.dia.day}, às 14h, com Dra. Ana Souza"
+    async with fabrica() as sessao:
+        assert (await sessao.get_one(Agendamento, UUID(antigo))).status == "confirmado"
+        segurado = await sessao.get_one(Agendamento, UUID(hold["hold_id"]))
+    assert segurado.status == "segurado"
+
+
+async def test_preparar_remarcacao_recusa_hold_de_outra_chamada(
+    app_mcp: httpx.AsyncClient, http_api: httpx.AsyncClient, c: Cenario
+) -> None:
+    antigo = await _consulta_de_maria(app_mcp, http_api, c, c.h(13))
+    outra = await _nova_chamada(http_api, c)
+    async with _na_chamada(app_mcp, outra) as cliente:
+        hold = await _segurar(cliente, c, c.h(14))
+    chamada_id = await _nova_chamada(http_api, c)
+    async with _na_chamada(app_mcp, chamada_id) as cliente:
+        await _ferramenta(cliente, "selecionar_paciente", paciente_id=str(c.maria))
+        await _ferramenta(cliente, "verificar_identidade", data_nascimento="1990-01-01")
+        corpo = await _ferramenta(
+            cliente, "preparar_remarcacao", agendamento_id=antigo, hold_id=hold["hold_id"]
+        )
+    assert corpo == {"ok": False, "motivo": "hold_perdido"}
+
+
+@pytest.mark.parametrize("caminho", ["cancelar/preparar", "remarcar/preparar"])
+async def test_preparar_e_so_para_ligacao(
+    http_api: httpx.AsyncClient, c: Cenario, caminho: str
+) -> None:
+    corpo: dict[str, str] = {"hold_id": str(uuid4())} if "remarcar" in caminho else {}
+    resposta = await http_api.post(
+        f"/agendamentos/{uuid4()}/{caminho}",
+        headers={"X-Clinica-Id": str(c.clinica_id)},
+        json=corpo,
+    )
+    assert resposta.json()["motivo"] == "exige_chamada"

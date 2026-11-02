@@ -67,7 +67,7 @@ Fale com as suas palavras: o importante é ver como ela reage.
 Estes são os pontos que os testes automáticos não conseguem avaliar:
 
 - **Qualidade da voz e do português.** Os testes usaram transcrições. Você é a primeira pessoa a ouvir de fato.
-- **Confirmação.** Veja se ela agenda, remarca ou cancela só depois de um "sim" claro. Experimente respostas vagas, como "essa mesma" ou "pode ser". Essa regra depende do prompt, sem proteção por baixo: é o ponto de maior risco.
+- **Confirmação.** Ao remarcar ou cancelar, responda "essa mesma" ou "pode ser" à pergunta de confirmação: nada deve mudar, e ela deve pedir um "sim" ou "não". Ao agendar, a confirmação ainda depende só do prompt.
 - **Texto do consentimento.** É um rascunho, a revisar na T6.1. Veja se soa bem e se não ficou comprido.
 - **Espera depois de uma pergunta.** Dúvidas e ações na agenda levam cerca de 3 s até a resposta, acima da meta de 1,5 s (veja a seção 7).
 - **Datas faladas.** Veja se ela entende bem a data de nascimento e os horários na sua voz.
