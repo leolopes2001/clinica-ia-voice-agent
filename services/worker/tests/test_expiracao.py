@@ -11,21 +11,24 @@ from uuid import UUID, uuid4
 
 import aio_pika
 import pytest
-from aio_pika.abc import AbstractChannel, AbstractIncomingMessage
+from aio_pika.abc import AbstractChannel, AbstractIncomingMessage, AbstractQueue
 from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import Range
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
-from clinica_api.publicacao import LIMITE_PUBLICACAO_S, PublicadorRabbit
+from clinica_api.publicacao import PublicadorRabbit
 from clinica_core.config import ConfigPostgres, ConfigRabbit
 from clinica_core.db import criar_engine, criar_fabrica_sessoes
+from clinica_core.eventos import EventoAgendamento
 from clinica_core.mensageria import (
     EXCHANGE_DLX,
     FILA_HOLDS_ATRASO,
     FILA_HOLDS_EXPIRAR,
+    LIMITE_PUBLICACAO_S,
     HoldSegurado,
     abrir_canal,
     conectar,
+    declarar_fila_painel,
     declarar_topologia,
     publicar,
 )
@@ -142,23 +145,25 @@ async def _receber(canal: AbstractChannel, nome: str) -> AbstractIncomingMessage
 async def test_hold_vencido_expira(fabrica: Fabrica, criar_hold: CriarHold) -> None:
     hold_id = await criar_hold()
     async with fabrica() as sessao:
-        assert await expirar_hold(sessao, hold_id) is True
+        evento = await expirar_hold(sessao, hold_id)
         await sessao.commit()
+    assert evento is not None
+    assert (evento.tipo, evento.agendamento_id, evento.status) == ("expirado", hold_id, "expirado")
     assert await _status(fabrica, hold_id) == "expirado"
 
 
 async def test_expirar_de_novo_nao_tem_efeito(fabrica: Fabrica, criar_hold: CriarHold) -> None:
     hold_id = await criar_hold()
     async with fabrica() as sessao:
-        assert await expirar_hold(sessao, hold_id) is True
-        assert await expirar_hold(sessao, hold_id) is False
+        assert await expirar_hold(sessao, hold_id) is not None
+        assert await expirar_hold(sessao, hold_id) is None
         await sessao.commit()
 
 
 async def test_hold_valido_nao_expira(fabrica: Fabrica, criar_hold: CriarHold) -> None:
     hold_id = await criar_hold(vencido=False)
     async with fabrica() as sessao:
-        assert await expirar_hold(sessao, hold_id) is False
+        assert await expirar_hold(sessao, hold_id) is None
         await sessao.commit()
     assert await _status(fabrica, hold_id) == "segurado"
 
@@ -166,14 +171,14 @@ async def test_hold_valido_nao_expira(fabrica: Fabrica, criar_hold: CriarHold) -
 async def test_consulta_confirmada_nao_expira(fabrica: Fabrica, criar_hold: CriarHold) -> None:
     hold_id = await criar_hold(status="confirmado", com_paciente=True)
     async with fabrica() as sessao:
-        assert await expirar_hold(sessao, hold_id) is False
+        assert await expirar_hold(sessao, hold_id) is None
         await sessao.commit()
     assert await _status(fabrica, hold_id) == "confirmado"
 
 
 async def test_hold_inexistente_nao_expira(fabrica: Fabrica) -> None:
     async with fabrica() as sessao:
-        assert await expirar_hold(sessao, uuid4()) is False
+        assert await expirar_hold(sessao, uuid4()) is None
 
 
 async def test_varredura_expira_so_os_vencidos(fabrica: Fabrica, criar_hold: CriarHold) -> None:
@@ -181,7 +186,7 @@ async def test_varredura_expira_so_os_vencidos(fabrica: Fabrica, criar_hold: Cri
     valido = await criar_hold(vencido=False)
     confirmado = await criar_hold(status="confirmado", com_paciente=True)
     async with fabrica() as sessao:
-        expirados = await expirar_vencidos(sessao)
+        expirados = {e.agendamento_id for e in await expirar_vencidos(sessao)}
         await sessao.commit()
     assert vencido in expirados
     assert valido not in expirados
@@ -202,7 +207,7 @@ async def test_varredura_pula_hold_travado_sem_esperar(
             async with asyncio.timeout(5):
                 expirados = await expirar_vencidos(sessao)
             await sessao.commit()
-        assert hold_id not in expirados
+        assert hold_id not in {e.agendamento_id for e in expirados}
         await trava.rollback()
     assert await _status(fabrica, hold_id) == "segurado"
 
@@ -304,6 +309,130 @@ async def test_worker_para_ao_receber_o_sinal(banco: str, vhost: str, tmp_path: 
     await asyncio.wait_for(tarefa, timeout=5)
 
 
+# ---- Eventos agendamento.expirado
+
+
+@pytest.fixture
+async def canal_painel(vhost: str) -> AsyncIterator[AbstractChannel]:
+    conexao = await conectar(ConfigRabbit())
+    canal = await abrir_canal(conexao)
+    await declarar_topologia(canal)
+    yield canal
+    await conexao.close()
+
+
+@pytest.fixture
+async def fila_painel(canal_painel: AbstractChannel) -> AbstractQueue:
+    return await declarar_fila_painel(canal_painel)
+
+
+async def _proximo_evento(fila: AbstractQueue) -> tuple[str | None, EventoAgendamento]:
+    async with asyncio.timeout(10):
+        while True:
+            mensagem = await fila.get(fail=False)
+            if mensagem is not None:
+                await mensagem.ack()
+                return (
+                    mensagem.routing_key,
+                    EventoAgendamento.model_validate_json(mensagem.body),
+                )
+            await asyncio.sleep(0.02)
+
+
+async def test_expirar_pela_fila_avisa_o_painel(
+    criar_hold: CriarHold, fila_painel: AbstractQueue, publicador: PublicadorRabbit
+) -> None:
+    hold_id = await criar_hold()
+    await publicador.hold_criado(hold_id, CURTA)
+    chave, evento = await _proximo_evento(fila_painel)
+    assert chave == "agendamento.expirado"
+    assert (evento.agendamento_id, evento.status) == (hold_id, "expirado")
+    assert evento.inicio.tzinfo is not None
+
+
+async def test_mensagem_repetida_gera_um_evento_so(
+    fabrica: Fabrica,
+    criar_hold: CriarHold,
+    fila_painel: AbstractQueue,
+    publicador: PublicadorRabbit,
+    consultar_filas: Callable[[], Awaitable[dict[str, Any]]],
+) -> None:
+    hold_id = await criar_hold()
+    await publicador.hold_criado(hold_id, CURTA)
+    await publicador.hold_criado(hold_id, CURTA)
+    await _proximo_evento(fila_painel)
+    await asyncio.sleep(0.5)
+
+    async def filas_vazias() -> bool:
+        filas = await consultar_filas()
+        return all(
+            filas[f].get("messages", 1) == 0 for f in (FILA_HOLDS_ATRASO, FILA_HOLDS_EXPIRAR)
+        )
+
+    await _ate_que(filas_vazias)
+    assert await fila_painel.get(fail=False) is None
+
+
+async def test_hold_valido_nao_gera_evento(
+    criar_hold: CriarHold, fila_painel: AbstractQueue, publicador: PublicadorRabbit
+) -> None:
+    vencido = await criar_hold()
+    await publicador.hold_criado(await criar_hold(vencido=False), CURTA)
+    await publicador.hold_criado(vencido, CURTA)
+    # A ordem FIFO garante que o hold válido foi processado antes do vencido.
+    _, evento = await _proximo_evento(fila_painel)
+    assert evento.agendamento_id == vencido
+
+
+@pytest.mark.parametrize("worker", [0.05], indirect=True)
+async def test_varredura_avisa_o_painel(
+    criar_hold: CriarHold, fila_painel: AbstractQueue, worker: Path
+) -> None:
+    hold_id = await criar_hold()
+    chave, evento = await _proximo_evento(fila_painel)
+    assert chave == "agendamento.expirado"
+    assert evento.agendamento_id == hold_id
+
+
+async def _falha_ao_publicar(*_: Any, **__: Any) -> None:
+    raise ConnectionError("broker caiu")
+
+
+async def test_evento_perdido_nao_manda_a_mensagem_para_a_dlq(
+    monkeypatch: pytest.MonkeyPatch,
+    fabrica: Fabrica,
+    criar_hold: CriarHold,
+    publicador: PublicadorRabbit,
+    consultar_filas: Callable[[], Awaitable[dict[str, Any]]],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    monkeypatch.setattr("clinica_core.eventos.publicar", _falha_ao_publicar)
+    hold_id = await criar_hold()
+    with caplog.at_level(logging.WARNING):
+        await publicador.hold_criado(hold_id, CURTA)
+        await _espera_status(fabrica, hold_id, "expirado")
+        await _ate_que(lambda: "broker caiu" in caplog.text)
+    await asyncio.sleep(0.5)
+
+    async def sem_mensagem() -> bool:
+        filas = await consultar_filas()
+        return bool(filas[FILA_HOLDS_EXPIRAR].get("messages", 1) == 0)
+
+    await _ate_que(sem_mensagem)
+    assert (await consultar_filas())[f"{FILA_HOLDS_EXPIRAR}.dlq"].get("messages", 0) == 0
+
+
+@pytest.mark.parametrize("worker", [0.05], indirect=True)
+async def test_evento_perdido_nao_para_a_varredura(
+    monkeypatch: pytest.MonkeyPatch, fabrica: Fabrica, criar_hold: CriarHold, worker: Path
+) -> None:
+    monkeypatch.setattr("clinica_core.eventos.publicar", _falha_ao_publicar)
+    hold_id = await criar_hold()
+    await _espera_status(fabrica, hold_id, "expirado")
+    os.utime(worker, (0, 0))
+    await _ate_que(lambda: saudavel(worker, 60))
+
+
 # ---- Saúde
 
 
@@ -321,6 +450,59 @@ def test_saude_com_arquivo_recente_e_antigo(tmp_path: Path) -> None:
 
 
 # ---- Publicador: nunca derruba o agendamento
+
+
+def _evento() -> EventoAgendamento:
+    return EventoAgendamento(
+        tipo="confirmado",
+        agendamento_id=uuid4(),
+        clinica_id=uuid4(),
+        dentista_id=uuid4(),
+        consultorio_id=uuid4(),
+        status="confirmado",
+        inicio=INICIO,
+        fim_periodo=INICIO + timedelta(minutes=30),
+    )
+
+
+async def test_eventos_sem_conexao_so_avisam(caplog: pytest.LogCaptureFixture) -> None:
+    publicador = PublicadorRabbit(ConfigRabbit())
+    with caplog.at_level(logging.WARNING):
+        await publicador.eventos([_evento()])
+    assert "não publicados" in caplog.text
+
+
+async def test_nenhum_evento_nao_avisa(caplog: pytest.LogCaptureFixture) -> None:
+    with caplog.at_level(logging.WARNING):
+        await PublicadorRabbit(ConfigRabbit()).eventos([])
+    assert caplog.text == ""
+
+
+async def test_publicacao_de_eventos_travada_respeita_o_limite(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    async def travada(*_: Any, **__: Any) -> None:
+        await asyncio.sleep(60)
+
+    monkeypatch.setattr("clinica_core.eventos.publicar", travada)
+    publicador = PublicadorRabbit(ConfigRabbit(), limite_s=0.05)
+    publicador._canal = _CanalQualquer()  # type: ignore[assignment]
+    inicio = time.monotonic()
+    with caplog.at_level(logging.WARNING):
+        await publicador.eventos([_evento(), _evento()])
+    assert time.monotonic() - inicio < 1
+    assert "não publicados" in caplog.text
+
+
+async def test_erro_ao_publicar_eventos_so_avisa(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    monkeypatch.setattr("clinica_core.eventos.publicar", _falha_ao_publicar)
+    publicador = PublicadorRabbit(ConfigRabbit())
+    publicador._canal = _CanalQualquer()  # type: ignore[assignment]
+    with caplog.at_level(logging.WARNING):
+        await publicador.eventos([_evento()])
+    assert "broker caiu" in caplog.text
 
 
 async def test_limite_de_publicacao_e_de_2_segundos() -> None:

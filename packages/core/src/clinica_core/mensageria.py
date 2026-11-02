@@ -23,6 +23,8 @@ FILA_MANUTENCAO_DIARIA = "manutencao.diaria"
 
 PADRAO_AGENDAMENTO = "agendamento.*"
 
+LIMITE_PUBLICACAO_S = 2.0
+
 
 class HoldSegurado(BaseModel):
     hold_id: UUID

@@ -25,7 +25,7 @@ from clinica_api.esquemas import (
     SegurarEntrada,
 )
 from clinica_api.horarios import ProcedimentoNaoEncontrado, listar_horarios_livres
-from clinica_api.publicacao import PublicadorHolds, PublicadorRabbit
+from clinica_api.publicacao import PublicadorAgenda, PublicadorRabbit
 from clinica_core.config import ConfigAgenda, ConfigPostgres, ConfigRabbit
 from clinica_core.db import criar_engine, criar_fabrica_sessoes
 
@@ -84,16 +84,16 @@ def _procedimento_nao_encontrado(request: Request, erro: Exception) -> JSONRespo
 def criar_app(
     config_postgres: ConfigPostgres | None = None,
     config_agenda: ConfigAgenda | None = None,
-    publicador: PublicadorHolds | None = None,
+    publicador: PublicadorAgenda | None = None,
 ) -> FastAPI:
     engine = criar_engine(config_postgres or ConfigPostgres())
-    publicador_holds = publicador or PublicadorRabbit(ConfigRabbit())
+    publicador_agenda = publicador or PublicadorRabbit(ConfigRabbit())
 
     @asynccontextmanager
     async def ciclo_de_vida(_: FastAPI) -> AsyncIterator[None]:
-        await publicador_holds.abrir()
+        await publicador_agenda.abrir()
         yield
-        await publicador_holds.fechar()
+        await publicador_agenda.fechar()
         await engine.dispose()
 
     app = FastAPI(title="Clínica Voz: API", lifespan=ciclo_de_vida)
@@ -131,7 +131,7 @@ def criar_app(
         config: Agenda,
         chave: ChaveIdempotencia,
     ) -> HoldCriado:
-        return await agenda.segurar(sessao, contexto, entrada, chave, config, publicador_holds)
+        return await agenda.segurar(sessao, contexto, entrada, chave, config, publicador_agenda)
 
     @app.post("/holds/{hold_id}/confirmar")
     async def confirmar(
@@ -141,7 +141,7 @@ def criar_app(
         contexto: ContextoDaRequisicao,
         chave: ChaveIdempotencia,
     ) -> AgendamentoConfirmado:
-        return await agenda.confirmar(sessao, contexto, hold_id, entrada, chave)
+        return await agenda.confirmar(sessao, contexto, hold_id, entrada, chave, publicador_agenda)
 
     @app.post("/agendamentos/{agendamento_id}/remarcar")
     async def remarcar(
@@ -151,7 +151,9 @@ def criar_app(
         contexto: ContextoDaRequisicao,
         chave: ChaveIdempotencia,
     ) -> AgendamentoConfirmado:
-        return await agenda.remarcar(sessao, contexto, agendamento_id, entrada, chave)
+        return await agenda.remarcar(
+            sessao, contexto, agendamento_id, entrada, chave, publicador_agenda
+        )
 
     @app.post("/agendamentos/{agendamento_id}/cancelar")
     async def cancelar(
@@ -161,6 +163,8 @@ def criar_app(
         contexto: ContextoDaRequisicao,
         chave: ChaveIdempotencia,
     ) -> AgendamentoCancelado:
-        return await agenda.cancelar(sessao, contexto, agendamento_id, entrada, chave)
+        return await agenda.cancelar(
+            sessao, contexto, agendamento_id, entrada, chave, publicador_agenda
+        )
 
     return app

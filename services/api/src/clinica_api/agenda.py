@@ -1,3 +1,4 @@
+import asyncio
 from collections.abc import AsyncIterator, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
@@ -26,9 +27,10 @@ from clinica_api.horarios import (
     listar_alternativas,
     localizar_horario_na_grade,
 )
-from clinica_api.publicacao import PublicadorHolds
+from clinica_api.publicacao import PublicadorAgenda
 from clinica_api.travas import travar
 from clinica_core.config import ConfigAgenda
+from clinica_core.eventos import EventoAgendamento, criar_evento
 from clinica_core.modelos import Agendamento, Chamada, Clinica, Paciente
 
 _SQLSTATE_EXCLUSAO = "23P01"
@@ -178,10 +180,11 @@ async def segurar(
     entrada: SegurarEntrada,
     chave: str,
     config: ConfigAgenda,
-    publicador: PublicadorHolds,
+    publicador: PublicadorAgenda,
 ) -> HoldCriado:
     chave_completa = _chave(contexto, "segurar", chave)
     resposta: HoldCriado | None = None
+    eventos: list[EventoAgendamento] = []
     async with _transacao(sessao):
         await travar(sessao, chave_completa)
         guardada = await idempotencia.buscar(sessao, chave_completa)
@@ -199,7 +202,7 @@ async def segurar(
         motivo = "indisponivel"
         if horario is not None:
             await travar(sessao, horario.dentista_id, horario.consultorio_id)
-            await sessao.execute(
+            expirados = await sessao.scalars(
                 update(Agendamento)
                 .where(
                     Agendamento.status == "segurado",
@@ -210,8 +213,10 @@ async def segurar(
                     ),
                 )
                 .values(status="expirado")
-                .execution_options(synchronize_session=False)
+                .returning(Agendamento)
+                .execution_options(synchronize_session=False, populate_existing=True)
             )
+            eventos = [criar_evento(expirado, "expirado") for expirado in expirados]
             hold = await _inserir_hold(sessao, contexto, entrada, horario, config)
             motivo = "ocupado"
             if hold is not None:
@@ -226,11 +231,19 @@ async def segurar(
                     fim_periodo=horario.fim_periodo,
                 )
                 await idempotencia.guardar(sessao, chave_completa, resposta.model_dump(mode="json"))
+                eventos.append(criar_evento(hold, "criado"))
 
+    # Depois do commit: a mensagem nunca fala de um hold que não foi gravado.
     if resposta is not None:
-        # Depois do commit: a mensagem nunca fala de um hold que não foi gravado.
-        await publicador.hold_criado(resposta.hold_id, timedelta(minutes=config.duracao_hold_min))
+        # Juntas, para que o limite de publicação não some duas vezes na resposta.
+        await asyncio.gather(
+            publicador.hold_criado(resposta.hold_id, timedelta(minutes=config.duracao_hold_min)),
+            publicador.eventos(eventos),
+        )
         return resposta
+
+    # A limpeza de holds vencidos fica gravada mesmo quando o novo hold não entra.
+    await publicador.eventos(eventos)
 
     # Fora da transação: quem perdeu não calcula alternativas segurando os locks.
     alternativas = await listar_alternativas(
@@ -309,6 +322,7 @@ async def confirmar(
     hold_id: UUID,
     entrada: ConfirmarEntrada,
     chave: str,
+    publicador: PublicadorAgenda,
 ) -> AgendamentoConfirmado:
     chave_completa = _chave(contexto, "confirmar", chave)
     async with _transacao(sessao):
@@ -322,7 +336,10 @@ async def confirmar(
         agendamento = await _confirmar_hold(sessao, contexto, hold_id, paciente_id)
         resposta = _confirmado(agendamento)
         await idempotencia.guardar(sessao, chave_completa, resposta.model_dump(mode="json"))
-        return resposta
+        evento = criar_evento(agendamento, "confirmado")
+
+    await publicador.eventos([evento])
+    return resposta
 
 
 def _exigir_identidade(contexto: Contexto) -> None:
@@ -350,16 +367,17 @@ async def _consulta_alteravel(
 
 async def _cancelar_consulta(
     sessao: AsyncSession, agendamento_id: UUID, motivo: str | None
-) -> None:
+) -> Agendamento:
     cancelado = await sessao.scalar(
         update(Agendamento)
         .where(Agendamento.id == agendamento_id, Agendamento.status == "confirmado")
         .values(status="cancelado", motivo_cancelamento=motivo)
-        .returning(Agendamento.id)
-        .execution_options(synchronize_session=False)
+        .returning(Agendamento)
+        .execution_options(synchronize_session=False, populate_existing=True)
     )
     if cancelado is None:
         raise ErroAgenda("agendamento_nao_ativo")
+    return cancelado
 
 
 async def remarcar(
@@ -368,6 +386,7 @@ async def remarcar(
     agendamento_id: UUID,
     entrada: RemarcarEntrada,
     chave: str,
+    publicador: PublicadorAgenda,
 ) -> AgendamentoConfirmado:
     chave_completa = _chave(contexto, "remarcar", chave)
     async with _transacao(sessao):
@@ -382,10 +401,13 @@ async def remarcar(
         recursos = await _recursos_do_hold(sessao, contexto, entrada.hold_id)
         await travar(sessao, *recursos, antigo.dentista_id, antigo.consultorio_id)
         novo = await _confirmar_hold(sessao, contexto, entrada.hold_id, antigo.paciente_id)
-        await _cancelar_consulta(sessao, agendamento_id, "remarcado")
+        cancelada = await _cancelar_consulta(sessao, agendamento_id, "remarcado")
         resposta = _confirmado(novo)
         await idempotencia.guardar(sessao, chave_completa, resposta.model_dump(mode="json"))
-        return resposta
+        evento = criar_evento(novo, "remarcado", anterior=criar_evento(cancelada, "cancelado"))
+
+    await publicador.eventos([evento])
+    return resposta
 
 
 async def cancelar(
@@ -394,6 +416,7 @@ async def cancelar(
     agendamento_id: UUID,
     entrada: CancelarEntrada,
     chave: str,
+    publicador: PublicadorAgenda,
 ) -> AgendamentoCancelado:
     chave_completa = _chave(contexto, "cancelar", chave)
     async with _transacao(sessao):
@@ -405,7 +428,7 @@ async def cancelar(
         _exigir_identidade(contexto)
         agendamento = await _consulta_alteravel(sessao, contexto, agendamento_id)
         inicio = _inicio(agendamento)
-        await _cancelar_consulta(sessao, agendamento_id, entrada.motivo)
+        cancelada = await _cancelar_consulta(sessao, agendamento_id, entrada.motivo)
         horas = (
             await sessao.execute(
                 select(Clinica.politica_cancelamento_horas).where(Clinica.id == contexto.clinica_id)
@@ -417,4 +440,7 @@ async def cancelar(
             politica_cancelamento_horas=horas,
         )
         await idempotencia.guardar(sessao, chave_completa, resposta.model_dump(mode="json"))
-        return resposta
+        evento = criar_evento(cancelada, "cancelado")
+
+    await publicador.eventos([evento])
+    return resposta

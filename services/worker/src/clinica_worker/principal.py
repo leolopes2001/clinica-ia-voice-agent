@@ -3,11 +3,12 @@ import logging
 import signal
 from pathlib import Path
 
-from aio_pika.abc import AbstractIncomingMessage
+from aio_pika.abc import AbstractChannel, AbstractIncomingMessage
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from clinica_core.config import ConfigPostgres, ConfigRabbit
 from clinica_core.db import criar_engine, criar_fabrica_sessoes
+from clinica_core.eventos import publicar_eventos
 from clinica_core.mensageria import (
     FILA_HOLDS_EXPIRAR,
     abrir_canal,
@@ -22,7 +23,9 @@ ARQUIVO_VIVO = Path("/tmp/clinica-worker-vivo")
 INTERVALO_VARREDURA_S = 60.0
 
 
-async def _varrer(fabrica: async_sessionmaker[AsyncSession], arquivo_vivo: Path) -> None:
+async def _varrer(
+    fabrica: async_sessionmaker[AsyncSession], canal: AbstractChannel, arquivo_vivo: Path
+) -> None:
     try:
         async with fabrica() as sessao:
             expirados = await expirar_vencidos(sessao)
@@ -32,6 +35,7 @@ async def _varrer(fabrica: async_sessionmaker[AsyncSession], arquivo_vivo: Path)
         return
     if expirados:
         logger.info("Varredura expirou %d holds", len(expirados))
+        await publicar_eventos(canal, expirados)
     # Só depois de falar com o banco: o health check do worker depende deste arquivo.
     await asyncio.to_thread(arquivo_vivo.touch)
 
@@ -47,17 +51,18 @@ async def rodar(
     fabrica = criar_fabrica_sessoes(engine)
     conexao = await conectar(config_rabbit)
 
-    async def consumir(mensagem: AbstractIncomingMessage) -> None:
-        await processar_mensagem(fabrica, mensagem)
-
     try:
         canal = await abrir_canal(conexao)
+
+        async def consumir(mensagem: AbstractIncomingMessage) -> None:
+            await processar_mensagem(fabrica, canal, mensagem)
+
         await canal.set_qos(prefetch_count=10)
         await declarar_topologia(canal)
         fila = await canal.get_queue(FILA_HOLDS_EXPIRAR)
         await fila.consume(consumir)
         while not parar.is_set():
-            await _varrer(fabrica, arquivo_vivo)
+            await _varrer(fabrica, canal, arquivo_vivo)
             try:
                 async with asyncio.timeout(intervalo_s):
                     await parar.wait()

@@ -1,6 +1,6 @@
 import asyncio
 from collections import Counter
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta
 from typing import Any
@@ -15,9 +15,12 @@ from sqlalchemy.dialects.postgresql import Range
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from clinica_api.app import criar_app
+from clinica_api.publicacao import PublicadorRabbit
 from clinica_api.travas import travar
-from clinica_core.config import ConfigAgenda, ConfigPostgres
+from clinica_core.config import ConfigAgenda, ConfigPostgres, ConfigRabbit
 from clinica_core.db import criar_fabrica_sessoes
+from clinica_core.eventos import EventoAgendamento
+from clinica_core.mensageria import abrir_canal, conectar, declarar_fila_painel
 from clinica_core.modelos import (
     Agendamento,
     Bloqueio,
@@ -57,6 +60,7 @@ class Cenario:
 class PublicadorFalso:
     def __init__(self) -> None:
         self.holds: list[tuple[UUID, timedelta]] = []
+        self.eventos_publicados: list[EventoAgendamento] = []
 
     async def abrir(self) -> None:
         pass
@@ -66,6 +70,9 @@ class PublicadorFalso:
 
     async def hold_criado(self, hold_id: UUID, duracao: timedelta) -> None:
         self.holds.append((hold_id, duracao))
+
+    async def eventos(self, eventos: Sequence[EventoAgendamento]) -> None:
+        self.eventos_publicados.extend(eventos)
 
 
 @pytest.fixture
@@ -634,6 +641,321 @@ async def test_mensagem_so_e_publicada_depois_do_commit(
         await _hold(cliente, c, c.painel)
     await app.state.engine.dispose()
     assert observador.status == "segurado"
+
+
+# ---- Eventos agendamento.*
+
+
+def _tipos(publicador: PublicadorFalso) -> list[tuple[str, str]]:
+    return [(e.tipo, str(e.agendamento_id)) for e in publicador.eventos_publicados]
+
+
+async def test_segurar_publica_criado(
+    cliente: httpx.AsyncClient, c: Cenario, publicador: PublicadorFalso
+) -> None:
+    hold_id = await _hold(cliente, c, c.painel)
+    assert _tipos(publicador) == [("criado", hold_id)]
+    evento = publicador.eventos_publicados[0]
+    assert evento.routing_key == "agendamento.criado"
+    assert evento.status == "segurado"
+    assert evento.clinica_id == c.clinica_id
+    assert evento.dentista_id == c.dentista_a
+    assert evento.consultorio_id == c.consultorio_1
+    assert evento.inicio == c.h(9)
+    assert evento.fim_periodo == c.h(9, 30)
+    assert evento.anterior is None
+
+
+async def test_confirmar_publica_confirmado(
+    cliente: httpx.AsyncClient, c: Cenario, publicador: PublicadorFalso
+) -> None:
+    hold_id = await _consulta(cliente, c)
+    assert _tipos(publicador) == [("criado", hold_id), ("confirmado", hold_id)]
+    assert publicador.eventos_publicados[-1].status == "confirmado"
+
+
+async def test_remarcar_publica_um_evento_com_os_dois_horarios(
+    cliente: httpx.AsyncClient, c: Cenario, publicador: PublicadorFalso
+) -> None:
+    consulta = await _consulta(cliente, c)
+    novo = await _hold(cliente, c, c.painel, c.h(10))
+    publicador.eventos_publicados.clear()
+    resposta = await _remarcar(cliente, consulta, novo, c.painel)
+    assert resposta.status_code == 200, resposta.text
+    assert _tipos(publicador) == [("remarcado", novo)]
+    evento = publicador.eventos_publicados[0]
+    assert evento.routing_key == "agendamento.remarcado"
+    assert (evento.status, evento.inicio) == ("confirmado", c.h(10))
+    assert evento.anterior is not None
+    assert str(evento.anterior.agendamento_id) == consulta
+    assert (evento.anterior.status, evento.anterior.inicio) == ("cancelado", c.h(9))
+
+
+async def test_cancelar_publica_cancelado(
+    cliente: httpx.AsyncClient, c: Cenario, publicador: PublicadorFalso
+) -> None:
+    consulta = await _consulta(cliente, c)
+    publicador.eventos_publicados.clear()
+    resposta = await _cancelar(cliente, consulta, c.painel)
+    assert resposta.status_code == 200, resposta.text
+    assert _tipos(publicador) == [("cancelado", consulta)]
+    assert publicador.eventos_publicados[0].status == "cancelado"
+
+
+async def test_evento_nao_leva_dados_do_paciente(
+    cliente: httpx.AsyncClient, c: Cenario, publicador: PublicadorFalso
+) -> None:
+    consulta = await _consulta(cliente, c)
+    await _cancelar(cliente, consulta, c.painel, "dor de dente")
+    for evento in publicador.eventos_publicados:
+        corpo = evento.model_dump_json()
+        assert str(c.paciente_id) not in corpo
+        assert "dor de dente" not in corpo
+    assert set(publicador.eventos_publicados[0].model_dump()) == {
+        "tipo",
+        "agendamento_id",
+        "clinica_id",
+        "dentista_id",
+        "consultorio_id",
+        "status",
+        "inicio",
+        "fim_periodo",
+        "anterior",
+    }
+
+
+async def test_retry_nao_publica_de_novo(
+    cliente: httpx.AsyncClient, c: Cenario, publicador: PublicadorFalso
+) -> None:
+    hold_id = (await _segurar(cliente, c, c.painel, chave="s")).json()["hold_id"]
+    await _segurar(cliente, c, c.painel, chave="s")
+    await _confirmar(cliente, hold_id, c.painel, c.paciente_id, chave="c")
+    await _confirmar(cliente, hold_id, c.painel, c.paciente_id, chave="c")
+    novo = await _hold(cliente, c, c.painel, c.h(10))
+    await _remarcar(cliente, hold_id, novo, c.painel, chave="r")
+    await _remarcar(cliente, hold_id, novo, c.painel, chave="r")
+    await _cancelar(cliente, novo, c.painel, chave="x")
+    await _cancelar(cliente, novo, c.painel, chave="x")
+    assert [tipo for tipo, _ in _tipos(publicador)] == [
+        "criado",
+        "confirmado",
+        "criado",
+        "remarcado",
+        "cancelado",
+    ]
+
+
+async def test_operacao_recusada_nao_publica(
+    cliente: httpx.AsyncClient, c: Cenario, fabrica: Fabrica, publicador: PublicadorFalso
+) -> None:
+    hold_id = await _hold(cliente, c, c.painel)
+    await _vencer(fabrica, hold_id)
+    publicador.eventos_publicados.clear()
+    assert (await _confirmar(cliente, hold_id, c.painel, c.paciente_id)).status_code == 409
+    assert (await _cancelar(cliente, hold_id, c.painel)).status_code == 409
+    assert publicador.eventos_publicados == []
+
+
+async def test_segurar_ocupado_nao_publica(
+    cliente: httpx.AsyncClient, c: Cenario, publicador: PublicadorFalso
+) -> None:
+    await _hold(cliente, c, c.painel)
+    publicador.eventos_publicados.clear()
+    assert (await _segurar(cliente, c, c.painel)).status_code == 409
+    assert publicador.eventos_publicados == []
+
+
+async def test_limpeza_ao_segurar_publica_expirado_antes_do_criado(
+    cliente: httpx.AsyncClient, c: Cenario, fabrica: Fabrica, publicador: PublicadorFalso
+) -> None:
+    vencido = await _hold(cliente, c, c.painel)
+    await _vencer(fabrica, vencido)
+    publicador.eventos_publicados.clear()
+    novo = await _hold(cliente, c, c.painel)
+    assert _tipos(publicador) == [("expirado", vencido), ("criado", novo)]
+    evento = publicador.eventos_publicados[0]
+    assert (evento.routing_key, evento.status) == ("agendamento.expirado", "expirado")
+    assert evento.inicio == c.h(9)
+
+
+async def test_limpeza_vale_para_hold_de_outro_dentista_no_consultorio(
+    cliente: httpx.AsyncClient, c: Cenario, fabrica: Fabrica, publicador: PublicadorFalso
+) -> None:
+    async with fabrica() as sessao:
+        await sessao.execute(
+            update(GradeTrabalho)
+            .where(GradeTrabalho.clinica_id == c.clinica_id)
+            .values(consultorio_id=c.consultorio_1)
+        )
+        await sessao.commit()
+    vencido = (await _segurar(cliente, c, c.painel, dentista=c.dentista_b)).json()["hold_id"]
+    await _vencer(fabrica, vencido)
+    publicador.eventos_publicados.clear()
+    novo = await _hold(cliente, c, c.painel)
+    assert _tipos(publicador) == [("expirado", vencido), ("criado", novo)]
+
+
+async def test_limpeza_e_publicada_mesmo_quando_o_novo_hold_da_ocupado(
+    cliente: httpx.AsyncClient, c: Cenario, fabrica: Fabrica, publicador: PublicadorFalso
+) -> None:
+    await _hold(cliente, c, c.painel)
+    vencido = await _hold(cliente, c, c.painel, c.h(10))
+    await _vencer(fabrica, vencido)
+    publicador.eventos_publicados.clear()
+    resposta = await _segurar(cliente, c, c.painel)
+    assert resposta.json()["motivo"] == "ocupado"
+    assert _tipos(publicador) == [("expirado", vencido)]
+    assert (await _ler(fabrica, vencido)).status == "expirado"
+
+
+async def test_retry_de_hold_vencido_publica_expirado_e_criado(
+    cliente: httpx.AsyncClient, c: Cenario, fabrica: Fabrica, publicador: PublicadorFalso
+) -> None:
+    primeiro = (await _segurar(cliente, c, c.painel, chave="k")).json()["hold_id"]
+    await _vencer(fabrica, primeiro)
+    publicador.eventos_publicados.clear()
+    segundo = (await _segurar(cliente, c, c.painel, chave="k")).json()["hold_id"]
+    assert _tipos(publicador) == [("expirado", primeiro), ("criado", segundo)]
+
+
+async def test_transacao_desfeita_nao_publica_a_limpeza(
+    cliente: httpx.AsyncClient,
+    c: Cenario,
+    fabrica: Fabrica,
+    publicador: PublicadorFalso,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    vencido = await _hold(cliente, c, c.painel)
+    await _vencer(fabrica, vencido)
+    publicador.eventos_publicados.clear()
+
+    async def falha(*_: Any, **__: Any) -> None:
+        raise RuntimeError("falha ao gravar")
+
+    monkeypatch.setattr("clinica_api.agenda.idempotencia.guardar", falha)
+    with pytest.raises(RuntimeError):
+        await _segurar(cliente, c, c.painel)
+    assert publicador.eventos_publicados == []
+    assert (await _ler(fabrica, vencido)).status == "segurado"
+
+
+async def test_eventos_so_saem_depois_do_commit(banco: str, c: Cenario, fabrica: Fabrica) -> None:
+    class Observador(PublicadorFalso):
+        vistos: list[str]
+
+        def __init__(self) -> None:
+            super().__init__()
+            self.vistos = []
+
+        async def eventos(self, eventos: Sequence[EventoAgendamento]) -> None:
+            for evento in eventos:
+                self.vistos.append((await _ler(fabrica, str(evento.agendamento_id))).status)
+
+    observador = Observador()
+    app = criar_app(ConfigPostgres(db=banco), ConfigAgenda(antecedencia_minima_min=0), observador)
+    transporte = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transporte, base_url="http://api") as cliente:
+        consulta = await _consulta(cliente, c)
+        novo = await _hold(cliente, c, c.painel, c.h(10))
+        await _remarcar(cliente, consulta, novo, c.painel)
+        await _cancelar(cliente, novo, c.painel)
+    await app.state.engine.dispose()
+    assert observador.vistos == ["segurado", "confirmado", "segurado", "confirmado", "cancelado"]
+
+
+async def test_hold_e_evento_sao_publicados_juntos(
+    banco: str, c: Cenario, fabrica: Fabrica
+) -> None:
+    class Dependentes(PublicadorFalso):
+        """Em sequência, os dois limites de publicação somariam; aqui, um espera o outro."""
+
+        def __init__(self) -> None:
+            super().__init__()
+            self.evento_iniciado = asyncio.Event()
+
+        async def hold_criado(self, hold_id: UUID, duracao: timedelta) -> None:
+            await self.evento_iniciado.wait()
+
+        async def eventos(self, eventos: Sequence[EventoAgendamento]) -> None:
+            self.evento_iniciado.set()
+
+    app = criar_app(
+        ConfigPostgres(db=banco), ConfigAgenda(antecedencia_minima_min=0), Dependentes()
+    )
+    transporte = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transporte, base_url="http://api") as cliente:
+        async with asyncio.timeout(5):
+            await _hold(cliente, c, c.painel)
+    await app.state.engine.dispose()
+
+
+async def test_evento_perdido_nao_derruba_a_operacao(
+    banco: str, c: Cenario, fabrica: Fabrica, caplog: pytest.LogCaptureFixture
+) -> None:
+    # Sem abrir(): o publicador real sem conexão com o broker.
+    app = criar_app(
+        ConfigPostgres(db=banco),
+        ConfigAgenda(antecedencia_minima_min=0),
+        PublicadorRabbit(ConfigRabbit()),
+    )
+    transporte = httpx.ASGITransport(app=app)
+    with caplog.at_level("WARNING"):
+        async with httpx.AsyncClient(transport=transporte, base_url="http://api") as cliente:
+            consulta = await _consulta(cliente, c)
+            assert (await _cancelar(cliente, consulta, c.painel)).status_code == 200
+    await app.state.engine.dispose()
+    assert "eventos não publicados" in caplog.text
+    assert (await _ler(fabrica, consulta)).status == "cancelado"
+
+
+async def test_painel_recebe_os_eventos_pelo_broker(
+    banco: str, vhost: str, c: Cenario, fabrica: Fabrica
+) -> None:
+    publicador = PublicadorRabbit(ConfigRabbit())
+    await publicador.abrir()
+    async with asyncio.timeout(10):
+        while True:
+            if publicador._canal is not None:
+                break
+            await asyncio.sleep(0.02)
+    conexao = await conectar(ConfigRabbit())
+    fila = await declarar_fila_painel(await abrir_canal(conexao))
+    app = criar_app(ConfigPostgres(db=banco), ConfigAgenda(antecedencia_minima_min=0), publicador)
+    transporte = httpx.ASGITransport(app=app)
+    try:
+        async with httpx.AsyncClient(transport=transporte, base_url="http://api") as cliente:
+            consulta = await _consulta(cliente, c)
+            novo = await _hold(cliente, c, c.painel, c.h(10))
+            await _remarcar(cliente, consulta, novo, c.painel)
+            await _cancelar(cliente, novo, c.painel)
+            vencido = await _hold(cliente, c, c.painel, c.h(11))
+            await _vencer(fabrica, vencido)
+            novo_hold = await _hold(cliente, c, c.painel, c.h(11))
+
+        recebidos: list[tuple[str | None, str]] = []
+        async with asyncio.timeout(10):
+            while len(recebidos) < 8:
+                mensagem = await fila.get(fail=False)
+                if mensagem is None:
+                    await asyncio.sleep(0.02)
+                    continue
+                await mensagem.ack()
+                evento = EventoAgendamento.model_validate_json(mensagem.body)
+                recebidos.append((mensagem.routing_key, str(evento.agendamento_id)))
+        assert recebidos == [
+            ("agendamento.criado", consulta),
+            ("agendamento.confirmado", consulta),
+            ("agendamento.criado", novo),
+            ("agendamento.remarcado", novo),
+            ("agendamento.cancelado", novo),
+            ("agendamento.criado", vencido),
+            ("agendamento.expirado", vencido),
+            ("agendamento.criado", novo_hold),
+        ]
+    finally:
+        await conexao.close()
+        await publicador.fechar()
+        await app.state.engine.dispose()
 
 
 # ---- Confirmar: quem pode confirmar o quê
@@ -1212,6 +1534,9 @@ async def _conferir_rodada(
     vencedor = next(r.json() for r in respostas if r.status_code == 201)
     hold_id = UUID(vencedor["hold_id"])
     assert [hold for hold, _ in publicador.holds] == [hold_id]
+    assert [(e.tipo, e.agendamento_id) for e in publicador.eventos_publicados] == [
+        ("criado", hold_id)
+    ]
     _conferir_alternativas(
         [r.json() for r in respostas if r.status_code == 409], c.h(9), c.h(9, 30)
     )
@@ -1243,6 +1568,7 @@ async def test_t1_5_50_tarefas_no_mesmo_horario_100_vezes(
                 erro.add_note(f"rodada {rodada} de 100")
                 raise
             publicador.holds.clear()
+            publicador.eventos_publicados.clear()
             async with fabrica() as sessao:
                 await sessao.execute(
                     delete(Agendamento).where(Agendamento.clinica_id == c.clinica_id)

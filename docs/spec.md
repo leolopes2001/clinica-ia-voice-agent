@@ -222,6 +222,7 @@ Regras de cada operação:
 - **Remarcar:** o novo horário já está segurado. Numa única transação, confirma o novo e cancela o antigo. Só vale para consultas `confirmado` que ainda não começaram; na ligação, exige identidade verificada e consulta do paciente selecionado. **Limitação conhecida do MVP:** não dá para remarcar para um horário que se sobrepõe à própria consulta (de 14h–15h para 14h30), porque o novo hold colide com a consulta antiga e a resposta é `ocupado`.
 - **Cancelar:** tem as mesmas condições de remarcar e é sempre permitido, mesmo fora do prazo da política. A resposta informa `dentro_do_prazo` e `politica_cancelamento_horas`.
 - **Idempotência:** toda operação de escrita recebe `Idempotency-Key` (hash de `chamada_id` + ferramenta + argumentos). A API guarda só as respostas de sucesso na tabela `idempotencia` por 24 h e devolve a mesma resposta num retry; uma falha não muda nada e pode ser executada de novo. Um retry de segurar só devolve a resposta guardada se o hold ainda estiver válido. Caso contrário, executa de novo, para o paciente não ficar preso a um hold vencido quando pede o mesmo horário outra vez.
+- **Eventos:** toda mudança gravada publica um evento `agendamento.*` depois do commit: segurar gera `criado`, confirmar gera `confirmado`, remarcar gera um único `remarcado`, com a consulta cancelada em `anterior`, e cancelar gera `cancelado`. Cada hold vencido gera `expirado` uma única vez, venha da fila, da varredura ou da limpeza ao segurar, inclusive quando esse novo hold termina em `ocupado`. Um retry que devolve resposta guardada não publica nada. O evento leva só ids, status e horário, sem nenhum dado do paciente. A publicação segue a mesma regra da expiração: tem limite de 2 s e, se falhar, só gera um log de aviso. Por isso, o evento é só um aviso: o painel relê a agenda do banco ao recebê-lo e ao reconectar.
 - **Painel:** usa os mesmos endpoints, com `origem='painel'`, e cai na mesma restrição. A API identifica a origem pelos headers: com `X-Chamada-Id`, usa a clínica da chamada e origem `voz`; sem ele, usa `X-Clinica-Id` e origem `painel`.
 
 Exemplo — duas ligações pedindo quinta às 14h ao mesmo tempo:
@@ -300,7 +301,7 @@ Há um exchange `clinica.eventos` do tipo topic, mais o `clinica.dlx` (direct) p
 
 | Routing key / fila | Produtor | Consumidor | Para quê |
 | --- | --- | --- | --- |
-| `agendamento.*` (criado, confirmado, remarcado, cancelado, expirado) → fila exclusiva e auto-delete, declarada por cada processo do painel ao subir | API | Painel (SSE) | Atualizar a agenda ao vivo. Sem painel no ar, os eventos são descartados; com várias instâncias, todas recebem |
+| `agendamento.*` (criado, confirmado, remarcado, cancelado, expirado) → fila exclusiva e auto-delete, declarada por cada processo do painel ao subir | API e worker | Painel (SSE) | Atualizar a agenda ao vivo. O worker produz `agendamento.expirado` ao expirar pela fila ou pela varredura; a API, na limpeza ao segurar. Sem painel no ar, os eventos são descartados; com várias instâncias, todas recebem |
 | `holds.atraso` (expiração por mensagem) → DLX → `holds.expirar` | API | Worker | Liberar holds vencidos. Uma varredura do worker a cada 60 s, fora do broker, cobre mensagens perdidas |
 | `conhecimento.indexar` | Painel | Worker | Extrair, fatiar, gerar embeddings e gravar |
 | `chamada.encerrada` | Agente | Worker | Gravar transcrição, desfecho e métricas |
@@ -375,7 +376,7 @@ São 7 fases, cada uma terminando em algo que roda e pode ser testado. As fases 
 - [x] T1.3 Endpoints segurar, confirmar, remarcar e cancelar, com idempotência e tradução do erro `23P01`, a rota HTTP de listar horários livres e o serviço `api` no Compose.
 - [x] T1.4 Fila de atraso + DLX para expiração de holds, e o consumidor no worker. Trocar o TTL da fila `holds.atraso` por expiração por mensagem (`expiration`), com a duração vinda das settings (`AGENDA_DURACAO_HOLD_MIN`): como todos os holds têm a mesma duração, a ordem FIFO garante que expirem na ordem certa, e a duração muda sem recriar a fila. Ao concluir, atualizar a seção RabbitMQ e a regra de expirar. Incluir uma migration com um CHECK em `agendamentos`: `origem='voz'` exige `chamada_id`.
 - [x] T1.5 **Teste de concorrência:** 50 tarefas `asyncio` tentando o mesmo horário. *Pronto quando:* exatamente 1 sucesso e 49 respostas `ocupado`, em 100 execuções seguidas.
-- [ ] T1.6 Publicação dos eventos `agendamento.*`. Quando o consumidor de `holds.expirar` ou a varredura do worker expirarem um hold, isso também gera `agendamento.expirado`, para o painel atualizar; nesse caso, o produtor é o worker. *A resolver:* a limpeza de holds vencidos ao segurar também marca `expirado`, na API, e o painel precisa saber disso.
+- [x] T1.6 Publicação dos eventos `agendamento.*`. Quando o consumidor de `holds.expirar` ou a varredura do worker expirarem um hold, isso também gera `agendamento.expirado`, para o painel atualizar; nesse caso, o produtor é o worker. A limpeza de holds vencidos ao segurar também marca `expirado`; nesse caso, o produtor é a API.
 
 **Fase 2 — Servidores MCP e RAG**
 
@@ -437,3 +438,15 @@ São 7 fases, cada uma terminando em algo que roda e pode ser testado. As fases 
 - **Rede móvel:** as operadoras vêm desligando 2G/3G. Compre um gateway com 4G e VoLTE e confirme a compatibilidade com a operadora do chip.
 - **Qualidade de áudio do celular (8 kHz):** números e nomes podem ser mal entendidos. Mitigação: o agente sempre repete datas, horários e nomes antes de confirmar (Constituição, item 4).
 - **Uso do chip pela operadora:** algumas operadoras restringem o uso de chips pré-pagos em gateways. Verifique o contrato e prefira um plano empresarial.
+
+## Decisões tomadas pelo agente
+
+Decisões técnicas tomadas durante a implementação, com a opção mais conservadora.
+
+| Tarefa | Decisão | Por quê |
+| --- | --- | --- |
+| T1.6 | A limpeza de holds vencidos ao segurar usa `RETURNING` e publica `agendamento.expirado` pela API, depois do commit, mesmo quando o novo hold termina em `ocupado`. | Essa limpeza é gravada mesmo quando o novo hold não entra, e o `UPDATE` só muda holds ainda `segurado`. Assim, cada hold gera um único evento, seja qual for o produtor. |
+| T1.6 | Os eventos são publicados depois do commit, sem outbox. Se a publicação falhar ou o processo cair nesse intervalo, o evento se perde e fica só o log de aviso. Um retry não publica de novo. | Segue a regra já usada na expiração: o broker nunca derruba o agendamento, e o banco é a fonte da verdade. Na T5.2, o painel precisa reler a agenda ao receber um evento e ao reconectar o SSE, sem depender da ordem nem da entrega de todos os eventos. |
+| T1.6 | O evento leva tipo, ids da clínica, do agendamento, do dentista e do consultório, status e horário. Não leva paciente nem motivo de cancelamento. | Coleta mínima (LGPD): o painel busca o resto na API, sob o login dele. |
+| T1.6 | Remarcar gera um único `agendamento.remarcado`, com a consulta cancelada no campo `anterior`, e não um `cancelado` separado. | A remarcação é uma operação atômica, e o painel fica sabendo dos dois horários afetados por um único evento. |
+| T1.6 | Ao segurar, a mensagem da fila de atraso e os eventos são publicados em paralelo, para que o limite de 2 s não some duas vezes na resposta. Eventos de um mesmo lote dividem um único limite de 2 s. | Mantém a promessa de que a publicação não atrasa o agendamento além do limite. Numa varredura muito grande, o que não couber no limite se perde, com log de aviso. |

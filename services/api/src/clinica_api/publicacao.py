@@ -1,5 +1,6 @@
 import asyncio
 import logging
+from collections.abc import Sequence
 from datetime import timedelta
 from typing import Protocol
 from uuid import UUID
@@ -7,8 +8,10 @@ from uuid import UUID
 from aio_pika.abc import AbstractChannel, AbstractRobustConnection
 
 from clinica_core.config import ConfigRabbit
+from clinica_core.eventos import EventoAgendamento, publicar_eventos
 from clinica_core.mensageria import (
     FILA_HOLDS_ATRASO,
+    LIMITE_PUBLICACAO_S,
     HoldSegurado,
     abrir_canal,
     conectar,
@@ -18,16 +21,17 @@ from clinica_core.mensageria import (
 
 logger = logging.getLogger(__name__)
 
-LIMITE_PUBLICACAO_S = 2.0
 _ESPERA_RECONEXAO_S = 5.0
 
 
-class PublicadorHolds(Protocol):
+class PublicadorAgenda(Protocol):
     async def abrir(self) -> None: ...
 
     async def fechar(self) -> None: ...
 
     async def hold_criado(self, hold_id: UUID, duracao: timedelta) -> None: ...
+
+    async def eventos(self, eventos: Sequence[EventoAgendamento]) -> None: ...
 
 
 class PublicadorRabbit:
@@ -81,3 +85,11 @@ class PublicadorRabbit:
                 )
         except Exception as erro:
             logger.warning("Hold %s não publicado: %r", hold_id, erro)
+
+    async def eventos(self, eventos: Sequence[EventoAgendamento]) -> None:
+        if not eventos:
+            return
+        if self._canal is None:
+            logger.warning("%d eventos não publicados: RabbitMQ não conectado", len(eventos))
+            return
+        await publicar_eventos(self._canal, eventos, self._limite_s)
