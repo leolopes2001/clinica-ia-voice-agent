@@ -41,3 +41,4 @@ class ConfigAgenda(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="AGENDA_", env_file=".env", extra="ignore")
 
     antecedencia_minima_min: int = Field(default=120, ge=0)
+    duracao_hold_min: int = Field(default=3, ge=1)

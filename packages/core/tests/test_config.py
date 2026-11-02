@@ -10,7 +10,7 @@ VARIAVEIS = [
     for prefixo, nomes in {
         "POSTGRES": ("HOST", "PORT", "USER", "PASSWORD", "DB"),
         "RABBITMQ": ("HOST", "PORT", "USER", "PASSWORD", "VHOST"),
-        "AGENDA": ("ANTECEDENCIA_MINIMA_MIN",),
+        "AGENDA": ("ANTECEDENCIA_MINIMA_MIN", "DURACAO_HOLD_MIN"),
     }.items()
     for nome in nomes
 ]
@@ -67,5 +67,15 @@ def test_antecedencia_minima_vem_do_ambiente(monkeypatch: pytest.MonkeyPatch) ->
 
 def test_antecedencia_minima_negativa_e_recusada(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("AGENDA_ANTECEDENCIA_MINIMA_MIN", "-1")
+    with pytest.raises(ValidationError):
+        ConfigAgenda()
+
+
+def test_duracao_do_hold_padrao_e_de_3_minutos() -> None:
+    assert ConfigAgenda().duracao_hold_min == 3
+
+
+def test_duracao_do_hold_zero_e_recusada(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("AGENDA_DURACAO_HOLD_MIN", "0")
     with pytest.raises(ValidationError):
         ConfigAgenda()

@@ -12,6 +12,7 @@ IMAGENS = {
     "rabbitmq": "rabbitmq:3-management",
     "redis": "redis:7",
 }
+CONSTRUIDOS = ["api"]
 PORTAS = {
     "postgres": {("127.0.0.1", "5432")},
     "rabbitmq": {("127.0.0.1", "5672"), ("127.0.0.1", "15672")},
@@ -48,10 +49,30 @@ def _servicos_em_execucao() -> dict[str, dict[str, Any]]:
 
 
 def test_servicos_e_imagens(configuracao: dict[str, Any]) -> None:
-    assert {nome: servico["image"] for nome, servico in configuracao.items()} == IMAGENS
+    assert set(configuracao) == {*IMAGENS, *CONSTRUIDOS}
+    assert {nome: configuracao[nome]["image"] for nome in IMAGENS} == IMAGENS
 
 
-@pytest.mark.parametrize("servico", IMAGENS)
+@pytest.mark.parametrize("servico", CONSTRUIDOS)
+def test_servico_construido_no_repositorio(configuracao: dict[str, Any], servico: str) -> None:
+    assert configuracao[servico]["build"]["context"] == str(RAIZ)
+    assert configuracao[servico]["build"]["dockerfile"] == f"services/{servico}/Dockerfile"
+
+
+def test_api_publicada_so_em_loopback(configuracao: dict[str, Any]) -> None:
+    portas = configuracao["api"]["ports"]
+    assert [(porta.get("host_ip"), porta["target"]) for porta in portas] == [("127.0.0.1", 8000)]
+
+
+def test_api_depende_de_postgres_e_rabbitmq_saudaveis(configuracao: dict[str, Any]) -> None:
+    dependencias = configuracao["api"]["depends_on"]
+    assert {nome: d["condition"] for nome, d in dependencias.items()} == {
+        "postgres": "service_healthy",
+        "rabbitmq": "service_healthy",
+    }
+
+
+@pytest.mark.parametrize("servico", [*IMAGENS, *CONSTRUIDOS])
 def test_restart_e_health_check(configuracao: dict[str, Any], servico: str) -> None:
     assert configuracao[servico]["restart"] == "unless-stopped"
     assert configuracao[servico]["healthcheck"]["test"]
@@ -66,6 +87,6 @@ def test_portas_publicadas_so_em_loopback(configuracao: dict[str, Any], servico:
     assert portas == PORTAS[servico]
 
 
-@pytest.mark.parametrize("servico", IMAGENS)
+@pytest.mark.parametrize("servico", [*IMAGENS, *CONSTRUIDOS])
 def test_servico_saudavel(servico: str) -> None:
     assert _servicos_em_execucao()[servico]["Health"] == "healthy"

@@ -3,6 +3,7 @@ members = ["packages/*", "services/*"]
 
 [dependency-groups]
 dev = [
+    "httpx",
     "mypy",
     "pre-commit",
     "pytest",

@@ -20,6 +20,7 @@ from clinica_core.modelos import (
 )
 
 PASSO = timedelta(minutes=15)
+DIAS_DE_ALTERNATIVAS = timedelta(days=7)
 _RESOLUCAO_TSTZ = timedelta(microseconds=1)
 
 
@@ -156,14 +157,16 @@ def _ocupacao(
     return Ocupacao(inicio, fim, dentista_id, consultorio_id)
 
 
-async def listar_horarios_livres(
+async def _calcular(
     sessao: AsyncSession,
     clinica_id: UUID,
     procedimento_id: UUID,
     a_partir_de: datetime,
     ate: datetime,
     config: ConfigAgenda,
-    dentista_id: UUID | None = None,
+    dentista_id: UUID | None,
+    *,
+    considerar_agendamentos: bool,
 ) -> list[HorarioLivre]:
     linha = (
         await sessao.execute(
@@ -211,21 +214,22 @@ async def listar_horarios_livres(
     bloqueios = await sessao.scalars(
         select(Bloqueio).where(Bloqueio.clinica_id == clinica_id, Bloqueio.periodo.overlaps(faixa))
     )
-    agendamentos = await sessao.scalars(
-        select(Agendamento).where(
-            Agendamento.clinica_id == clinica_id,
-            Agendamento.periodo.overlaps(faixa),
-            or_(
-                Agendamento.status == "confirmado",
-                # Um hold vencido fica livre mesmo antes de o worker marcá-lo como expirado.
-                and_(Agendamento.status == "segurado", Agendamento.expira_em > func.now()),
-            ),
+    ocupacoes = [_ocupacao(b.periodo, limites, b.dentista_id) for b in bloqueios]
+    if considerar_agendamentos:
+        agendamentos = await sessao.scalars(
+            select(Agendamento).where(
+                Agendamento.clinica_id == clinica_id,
+                Agendamento.periodo.overlaps(faixa),
+                or_(
+                    Agendamento.status == "confirmado",
+                    # Um hold vencido fica livre mesmo antes de o worker marcá-lo como expirado.
+                    and_(Agendamento.status == "segurado", Agendamento.expira_em > func.now()),
+                ),
+            )
         )
-    )
-    ocupacoes = [
-        *(_ocupacao(b.periodo, limites, b.dentista_id) for b in bloqueios),
-        *(_ocupacao(a.periodo, limites, a.dentista_id, a.consultorio_id) for a in agendamentos),
-    ]
+        ocupacoes += [
+            _ocupacao(a.periodo, limites, a.dentista_id, a.consultorio_id) for a in agendamentos
+        ]
     return calcular_horarios_livres(
         turnos,
         ocupacoes,
@@ -234,4 +238,70 @@ async def listar_horarios_livres(
         fuso,
         inicio_minimo,
         ate,
+    )
+
+
+async def listar_horarios_livres(
+    sessao: AsyncSession,
+    clinica_id: UUID,
+    procedimento_id: UUID,
+    a_partir_de: datetime,
+    ate: datetime,
+    config: ConfigAgenda,
+    dentista_id: UUID | None = None,
+) -> list[HorarioLivre]:
+    return await _calcular(
+        sessao,
+        clinica_id,
+        procedimento_id,
+        a_partir_de,
+        ate,
+        config,
+        dentista_id,
+        considerar_agendamentos=True,
+    )
+
+
+async def localizar_horario_na_grade(
+    sessao: AsyncSession,
+    clinica_id: UUID,
+    procedimento_id: UUID,
+    dentista_id: UUID,
+    inicio: datetime,
+    config: ConfigAgenda,
+) -> HorarioLivre | None:
+    """Valida tudo que a exclusion constraint não conhece, ignorando os agendamentos."""
+    horarios = await _calcular(
+        sessao,
+        clinica_id,
+        procedimento_id,
+        inicio,
+        inicio,
+        config,
+        dentista_id,
+        considerar_agendamentos=False,
+    )
+    return horarios[0] if horarios else None
+
+
+async def listar_alternativas(
+    sessao: AsyncSession,
+    clinica_id: UUID,
+    procedimento_id: UUID,
+    dentista_id: UUID,
+    inicio: datetime,
+    config: ConfigAgenda,
+) -> list[HorarioLivre]:
+    nome_fuso = (
+        await sessao.execute(select(Clinica.fuso).where(Clinica.id == clinica_id))
+    ).scalar_one()
+    dia = inicio.astimezone(ZoneInfo(nome_fuso)).replace(hour=0, minute=0, second=0, microsecond=0)
+    return await listar_horarios_livres(
+        sessao,
+        clinica_id,
+        procedimento_id,
+        dia,
+        (dia + DIAS_DE_ALTERNATIVAS).replace(hour=23, minute=59),
+        config,
+        dentista_id,
     )

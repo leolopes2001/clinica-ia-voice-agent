@@ -214,12 +214,14 @@ CREATE TABLE agendamentos (
 
 Regras de cada operação:
 
-- **Segurar:** numa transação, primeiro marca como `expirado` os holds vencidos daquele dentista ou daquele consultório (`status='segurado' AND expira_em < now()`), porque os dois entram nas exclusion constraints, depois insere com `status='segurado'` e `expira_em = now() + 3 min`. Erro `23P01` (exclusion violation) vira a resposta `{ok: false, motivo: "ocupado", alternativas: [...]}`.
+- **Segurar:** primeiro valida o que a constraint não conhece (grade, bloqueios, habilitação e antecedência); um horário inválido vira `{ok: false, motivo: "indisponivel", alternativas: [...]}`. Depois, numa transação, toma os locks, marca como `expirado` os holds vencidos daquele dentista ou daquele consultório (`status='segurado' AND expira_em < now()`), porque os dois entram nas exclusion constraints, e insere com `status='segurado'` e `expira_em = now() + duração do hold`. Erro `23P01` (exclusion violation) vira a resposta `{ok: false, motivo: "ocupado", alternativas: [...]}`. As alternativas são todos os candidatos do mesmo dentista, do dia pedido até 7 dias depois; a escolha das 3 opções fica na T2.1.
+- **Locks:** segurar, confirmar e remarcar tomam `pg_advisory_xact_lock` por dentista e por consultório, sempre em ordem fixa. Inserções simultâneas no mesmo horário podem dar deadlock (`40P01`) na exclusion constraint, em vez de `23P01`: numa medição com 50 conexões, isso ocorreu em 9 de 60 rodadas sem lock e em nenhuma de 100 com lock. Os locks só evitam esse deadlock: quem garante que não há duplicidade continua sendo a constraint.
 - **Expirar:** cada hold publica uma mensagem com TTL de 180 s numa fila de atraso. Quando ela vence, cai via dead-letter na fila `holds.expirar`, e o worker marca `expirado` se o hold ainda estiver segurado. A limpeza do passo anterior cobre o caso de o worker atrasar.
-- **Confirmar:** `UPDATE ... SET status='confirmado', paciente_id=... WHERE id=:hold AND status='segurado' AND expira_em > now() AND chamada_id=:chamada`. Se nenhuma linha mudar, o hold foi perdido e o agente oferece novas opções.
-- **Remarcar:** o novo horário já está segurado. Numa única transação, confirma o novo e cancela o antigo.
-- **Idempotência:** toda operação de escrita recebe `Idempotency-Key` (hash de `chamada_id` + ferramenta + argumentos). A API guarda a resposta na tabela `idempotencia` por 24 h e devolve a mesma resposta num retry.
-- **Painel:** usa os mesmos endpoints, com `origem='painel'`, e cai na mesma restrição.
+- **Confirmar:** `UPDATE ... SET status='confirmado', paciente_id=:paciente, expira_em=NULL WHERE id=:hold AND clinica_id=:clinica AND status='segurado' AND expira_em > now() AND origem=:origem AND chamada_id IS NOT DISTINCT FROM :chamada`. Assim, cada ligação só confirma os próprios holds, e o painel só confirma holds do painel. Se nenhuma linha mudar, o hold foi perdido e o agente oferece novas opções. Na ligação, o paciente vem de `chamadas.paciente_id` e nunca do corpo da requisição; no painel, vem do corpo e precisa ser da mesma clínica.
+- **Remarcar:** o novo horário já está segurado. Numa única transação, confirma o novo e cancela o antigo. Só vale para consultas `confirmado` que ainda não começaram; na ligação, exige identidade verificada e consulta do paciente selecionado. **Limitação conhecida do MVP:** não dá para remarcar para um horário que se sobrepõe à própria consulta (de 14h–15h para 14h30), porque o novo hold colide com a consulta antiga e a resposta é `ocupado`.
+- **Cancelar:** tem as mesmas condições de remarcar e é sempre permitido, mesmo fora do prazo da política. A resposta informa `dentro_do_prazo` e `politica_cancelamento_horas`.
+- **Idempotência:** toda operação de escrita recebe `Idempotency-Key` (hash de `chamada_id` + ferramenta + argumentos). A API guarda só as respostas de sucesso na tabela `idempotencia` por 24 h e devolve a mesma resposta num retry; uma falha não muda nada e pode ser executada de novo. Um retry de segurar só devolve a resposta guardada se o hold ainda estiver válido. Caso contrário, executa de novo, para o paciente não ficar preso a um hold vencido quando pede o mesmo horário outra vez.
+- **Painel:** usa os mesmos endpoints, com `origem='painel'`, e cai na mesma restrição. A API identifica a origem pelos headers: com `X-Chamada-Id`, usa a clínica da chamada e origem `voz`; sem ele, usa `X-Clinica-Id` e origem `painel`.
 
 Exemplo — duas ligações pedindo quinta às 14h ao mesmo tempo:
 
@@ -324,7 +326,7 @@ O painel é servido pelo FastAPI com templates Jinja2 e HTMX, e recebe atualiza�
 | `redis` | `redis:7` | — | — |
 | `livekit` | `livekit/livekit-server` | 7880, 7881/tcp, faixa UDP de RTC | redis |
 | `livekit-sip` | `livekit/sip` | 5060/udp, 10000–20000/udp (só na LAN) | livekit, redis |
-| `api` | build `./services/api` | `${API_PORT:-8000}` | postgres, rabbitmq |
+| `api` | build `./services/api` | `127.0.0.1:${API_PORT:-8000}` | postgres, rabbitmq |
 | `painel` | build `./services/painel` | 8080 | api, rabbitmq |
 | `mcp-clinica` | build `./services/mcp_clinica` | — (rede interna) | api |
 | `mcp-conhecimento` | build `./services/mcp_conhecimento` | — (rede interna) | postgres |
@@ -369,14 +371,14 @@ São 7 fases, cada uma terminando em algo que roda e pode ser testado. As fases 
 
 - [x] T1.1 Migrations Alembic de todas as tabelas, com `btree_gist`, `pgvector`, `unaccent` e as duas exclusion constraints.
 - [x] T1.2 Cálculo de horários livres (grade − bloqueios − agendamentos), com testes de borda: almoço, feriado, procedimento que não cabe no fim do turno.
-- [ ] T1.3 Endpoints segurar, confirmar, remarcar e cancelar, com idempotência e tradução do erro `23P01`, e a rota HTTP de listar horários livres. *A resolver:* a regra de confirmar exige `chamada_id=:chamada`, mas um hold criado no painel tem `chamada_id` nulo, e essa condição nunca é verdadeira nesse caso.
-- [ ] T1.4 Fila de atraso + DLX para expiração de holds, e o consumidor no worker. Trocar o TTL da fila `holds.atraso` por expiração por mensagem (`expiration`), com a duração vinda das settings: como todos os holds têm a mesma duração, a ordem FIFO garante que expirem na ordem certa, e a duração muda sem recriar a fila. Ao concluir, atualizar a seção RabbitMQ e a regra de expirar.
+- [x] T1.3 Endpoints segurar, confirmar, remarcar e cancelar, com idempotência e tradução do erro `23P01`, a rota HTTP de listar horários livres e o serviço `api` no Compose.
+- [ ] T1.4 Fila de atraso + DLX para expiração de holds, e o consumidor no worker. Trocar o TTL da fila `holds.atraso` por expiração por mensagem (`expiration`), com a duração vinda das settings (`AGENDA_DURACAO_HOLD_MIN`): como todos os holds têm a mesma duração, a ordem FIFO garante que expirem na ordem certa, e a duração muda sem recriar a fila. Ao concluir, atualizar a seção RabbitMQ e a regra de expirar.
 - [ ] T1.5 **Teste de concorrência:** 50 tarefas `asyncio` tentando o mesmo horário. *Pronto quando:* exatamente 1 sucesso e 49 respostas `ocupado`, em 100 execuções seguidas.
 - [ ] T1.6 Publicação dos eventos `agendamento.*`.
 
 **Fase 2 — Servidores MCP e RAG**
 
-- [ ] T2.1 `mcp-clinica` com as 12 ferramentas, resolvendo identidade pelo `X-Chamada-Id`. Em `listar_horarios_livres`, filtrar por `turno` e depois escolher as até 3 opções variadas entre os candidatos.
+- [ ] T2.1 `POST /chamadas` e os endpoints de identidade na API (identificar, selecionar, cadastrar e verificar), e `mcp-clinica` com as 12 ferramentas, resolvendo identidade pelo `X-Chamada-Id`. Em `listar_horarios_livres`, filtrar por `turno` e depois escolher as até 3 opções variadas entre os candidatos.
 - [ ] T2.2 Pipeline de ingestão no worker (extração, chunking, embeddings, gravação).
 - [ ] T2.3 `mcp-conhecimento` com busca híbrida e RRF.
 - [ ] T2.4 Conjunto de 30 perguntas de avaliação. *Pronto quando:* o trecho certo aparece no top 3 em ≥ 90% delas.
@@ -400,7 +402,7 @@ São 7 fases, cada uma terminando em algo que roda e pode ser testado. As fases 
 
 **Fase 5 — Painel administrativo**
 
-- [ ] T5.1 Login, perfis e auditoria.
+- [ ] T5.1 Login, perfis e auditoria, mais a autenticação entre o painel e a API, que até lá confia nos headers.
 - [ ] T5.2 Agenda dia/semana com SSE ao vivo, e criar/remarcar/cancelar manual.
 - [ ] T5.3 Cadastros: dentistas, grade, bloqueios, procedimentos, consultórios. O painel avisa quando um procedimento está sem dentista habilitado. Uma migration nova adiciona a `grade_trabalho` exclusion constraints que impedem duas linhas sobrepostas do mesmo dentista no mesmo dia da semana, e o mesmo para o consultório.
 - [ ] T5.4 Base de conhecimento: upload, status de indexação e tela "testar pergunta".
