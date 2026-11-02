@@ -40,7 +40,9 @@ Se algo no código conflitar com a spec, a spec vence. Se a spec estiver errada 
 - Faça **uma tarefa por vez** (ex.: "T1.3"), na ordem das fases. Não pule fases.
 - Antes de codar, apresente um plano curto da tarefa e espere aprovação.
 - Escreva os testes junto com o código. A tarefa só termina quando os testes passam e o critério "Pronto quando" da spec é atendido.
+- Cada tarefa tem a sua branch, criada a partir da `main` (ex.: `t1.3-endpoints-agenda`).
 - Ao terminar, marque o checkbox da tarefa em `docs/spec.md` (`- [ ]` → `- [x]`) e faça um commit com a mensagem `T1.3: <resumo>`.
+- Quando os testes passarem e o critério "Pronto quando" for atendido, faça o merge da branch na `main` sem pedir confirmação.
 - APIs de bibliotecas que mudam rápido (ADK, LiveKit, MCP): consulte a documentação atual antes de usar. Não confie na memória.
   - LiveKit: use o MCP `livekit-docs`, se estiver configurado.
   - ADK: https://adk.dev

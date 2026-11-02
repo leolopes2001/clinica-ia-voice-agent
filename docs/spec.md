@@ -287,7 +287,7 @@ Nenhuma ferramenta recebe telefone, `paciente_id` da sessão ou `clinica_id` com
 | --- | --- | --- |
 | `buscar_conhecimento` | pergunta, k = 3 | trechos `{texto, fonte}`, cada um com até 800 caracteres |
 
-O `turno` vale pelo horário de início da consulta, no fuso da clínica: manhã antes das 12h, tarde das 12h às 18h, noite depois das 18h.
+O `turno` vale pelo horário de início da consulta, no fuso da clínica: manhã `[início, 12h)`, tarde `[12h, 18h)` e noite `[18h, fim)`. Uma consulta às 18h00 é da noite.
 
 A transferência e o desligamento usam o `LiveKitToolset` do ADK, não o MCP. Os headers por chamada usam o mecanismo de headers dinâmicos do `McpToolset`. Se a versão do ADK não tiver, a alternativa é um wrapper de ferramenta que adiciona o `chamada_id`.
 
@@ -402,7 +402,7 @@ São 7 fases, cada uma terminando em algo que roda e pode ser testado. As fases 
 
 - [ ] T5.1 Login, perfis e auditoria.
 - [ ] T5.2 Agenda dia/semana com SSE ao vivo, e criar/remarcar/cancelar manual.
-- [ ] T5.3 Cadastros: dentistas, grade, bloqueios, procedimentos, consultórios. O painel avisa quando um procedimento está sem dentista habilitado.
+- [ ] T5.3 Cadastros: dentistas, grade, bloqueios, procedimentos, consultórios. O painel avisa quando um procedimento está sem dentista habilitado. Uma migration nova adiciona a `grade_trabalho` exclusion constraints que impedem duas linhas sobrepostas do mesmo dentista no mesmo dia da semana, e o mesmo para o consultório.
 - [ ] T5.4 Base de conhecimento: upload, status de indexação e tela "testar pergunta".
 - [ ] T5.5 Chamadas: lista, transcrição e desfecho.
 - [ ] T5.6 Configurações do agente, incluindo `antecedencia_minima_min`, que até lá vem das settings (`AGENDA_ANTECEDENCIA_MINIMA_MIN`).
