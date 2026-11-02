@@ -38,7 +38,7 @@ MCP_CONHECIMENTO_PORTA=8102 uv run python -m clinica_mcp_conhecimento
 
 ## 3. MCP Inspector
 
-O Inspector 2.x exige Node 22.19 ou mais recente. Crie uma chamada de teste, usando um telefone do seed:
+O Inspector 2.x exige Node 22.19 ou mais recente, tanto na interface web quanto na linha de comando. A interface é opcional. Crie uma chamada de teste, usando um telefone do seed:
 
 ```bash
 export CHAMADA=$(curl -s -X POST localhost:8001/chamadas \

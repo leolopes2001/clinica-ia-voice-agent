@@ -52,8 +52,12 @@ O paciente liga para o número da clínica e resolve tudo por voz, sem esperar a
 **H1 — Atender a ligação.** Como paciente, quero ligar e ser atendido na hora.
 
 - [ ] O agente atende em até 2 toques e se apresenta com o nome da clínica.
-- [ ] Se o telefone tiver um único paciente cadastrado, o agente cumprimenta pelo primeiro nome.
-- [ ] Se o telefone tiver mais de um paciente (por exemplo, pais que marcam para os filhos), o agente cumprimenta sem citar nomes e pergunta para quem é a consulta.
+- [ ] Em toda ligação, logo depois de se apresentar e antes de consultar qualquer dado do chamador, o agente pede o consentimento (LGPD), e a chamada registra a resposta.
+- [ ] Se a pessoa recusar, o agente só tira dúvidas e transfere: não identifica, não cadastra, não agenda, não remarca, não cancela e não registra pedido de retorno. A transcrição não é guardada.
+- [ ] Sem resposta ao pedido de consentimento (por exemplo, a pessoa desligou antes), o tratamento é o mesmo da recusa.
+- [ ] Com número oculto, o agente só tira dúvidas e transfere, como na recusa. A transcrição segue a resposta dada ao consentimento.
+- [ ] Depois do consentimento, se o telefone tiver um único paciente cadastrado, o agente cumprimenta pelo primeiro nome.
+- [ ] Depois do consentimento, se o telefone tiver mais de um paciente (por exemplo, pais que marcam para os filhos), o agente cumprimenta sem citar nomes e pergunta para quem é a consulta.
 - [ ] Latência entre o fim da fala do paciente e o início da resposta: mediana ≤ 1,5 s.
 - [ ] O paciente pode interromper o agente a qualquer momento (barge-in).
 
@@ -70,6 +74,7 @@ O paciente liga para o número da clínica e resolve tudo por voz, sem esperar a
 - [ ] O horário escolhido fica **segurado** por 3 minutos enquanto o paciente confirma.
 - [ ] Antes de gravar, o agente repete tudo e espera um "sim" explícito.
 - [ ] Paciente novo: o agente coleta nome completo e data de nascimento. O telefone vem da ligação.
+- [ ] Agendar e cadastrar exigem o consentimento dado na chamada. O cadastro por voz grava `pacientes.consentimento_em`.
 - [ ] Um mesmo telefone pode ter vários pacientes. Se a consulta for para alguém ainda não cadastrado nesse telefone, o agente faz o cadastro como paciente novo. A mesma pessoa (nome normalizado e data de nascimento) não é cadastrada duas vezes no mesmo telefone.
 
 **H4 — Conflito de horário.** Como clínica, quero que duas pessoas nunca fiquem com o mesmo horário.
@@ -125,10 +130,10 @@ O paciente liga para o número da clínica e resolve tudo por voz, sem esperar a
 | --- | --- |
 | Ligações simultâneas | Igual ao número de chips no gateway (meta inicial: 2) |
 | Latência de resposta | Mediana ≤ 1,5 s, p95 ≤ 3 s |
-| Busca RAG | p95 ≤ 300 ms (embedding + consulta) |
+| Busca RAG | p95 ≤ 800 ms (embedding + consulta), com cache em memória dos embeddings das perguntas. Reavaliar na T3.5 |
 | Disponibilidade | Serviços com `restart: unless-stopped` e health checks |
 | Segurança | Painel com login, senhas com hash argon2, MCP só na rede interna do Docker |
-| LGPD | Consentimento falado no início da ligação, auditoria e retenção configurável |
+| LGPD | Consentimento falado no início de toda ligação, gravado na chamada; auditoria e retenção configurável |
 
 ## Plano técnico
 
@@ -157,7 +162,7 @@ worker ◄── RabbitMQ            Postgres 16 (pgvector + exclusion) ◄─�
 | --- | --- | --- |
 | Telefonia | Gateway GSM/4G com SIP (1 chip = 1 canal) | Converte a ligação do chip em SIP na rede local |
 | Mídia | `livekit-server` + `livekit-sip` (self-hosted) | Salas WebRTC e ponte SIP. Ambos exigem Redis |
-| Agente | Python 3.12, `google-adk[livekit]` ≥ 2.9, `livekit-agents` ≥ 1.4 | Conversa e orquestração de ferramentas. Modelo `gemini-live-2.5-flash-native-audio` |
+| Agente | Python 3.12, `google-adk[livekit]` ≥ 2.9, `livekit-agents` ≥ 1.4 | Conversa e orquestração de ferramentas. O modelo vem de `AGENTE_MODELO_VOZ`, com chave do AI Studio. Candidatos: `gemini-3.1-flash-live-preview` e `gemini-2.5-flash-native-audio-latest` (escolha na T3.1) |
 | MCP | SDK oficial `mcp` 2.x (`MCPServer`, antigo FastMCP), transporte Streamable HTTP | `mcp-clinica` (agenda) e `mcp-conhecimento` (RAG) |
 | API | FastAPI, SQLAlchemy 2 async, asyncpg, Alembic, Pydantic v2 | Regras de negócio da agenda e dos cadastros |
 | Painel | FastAPI + Jinja2 + HTMX + SSE | Administração, todo em Python, sem build de front-end |
@@ -171,8 +176,8 @@ worker ◄── RabbitMQ            Postgres 16 (pgvector + exclusion) ◄─�
 2. O `livekit-sip` valida o trunk de entrada, cria a sala `call-<uuid>` e, pela dispatch rule, despacha o agente `recepcionista`.
 3. O worker do agente abre um job **em processo próprio**. O `LiveKitRunner` liga a sala ao ADK, e o estado da sessão recebe o telefone do chamador (`livekit_caller_phone_number`).
 4. O entrypoint registra a chamada na API (`POST /chamadas`), recebe um `chamada_id` e o injeta nos headers das conexões MCP (`X-Chamada-Id`, `X-Clinica-Id`).
-5. O agente pede consentimento LGPD, cumprimenta e conduz a conversa chamando as ferramentas MCP.
-6. Ao desligar, o agente publica `chamada.encerrada` com desfecho e transcrição, e o worker grava tudo.
+5. O agente se apresenta, pede o consentimento LGPD e registra a resposta na chamada. Com consentimento, cumprimenta e conduz a conversa chamando as ferramentas MCP. Sem consentimento, só tira dúvidas e transfere.
+6. Ao desligar, o agente publica `chamada.encerrada` com desfecho e transcrição, e o worker grava tudo. Sem consentimento dado na chamada, a transcrição é descartada.
 
 ### Concorrência
 
@@ -253,7 +258,7 @@ Todas as tabelas, exceto `clinicas` e `idempotencia`, têm `clinica_id` com FK p
 | `bloqueios` | dentista_id (nulo = clínica toda), periodo, motivo | Férias, feriados, almoço |
 | `pacientes` | nome, nome_normalizado, telefone_e164, data_nascimento, consentimento_em | Um telefone pode ter vários pacientes. Índice em (clinica_id, telefone_e164) e unicidade em (clinica_id, telefone_e164, nome_normalizado, data_nascimento). `nome_normalizado` é gerado no banco: sem acentos, em minúsculas e com espaços compactados |
 | `agendamentos` | (ver SQL acima) | |
-| `chamadas` | telefone, sala, inicio, fim, desfecho, transcricao, apagar_em, paciente_id, identidade_verificada_em, tentativas_identidade | `paciente_id` é o paciente escolhido na chamada. Trocar de paciente desfaz a verificação, mas não zera as tentativas |
+| `chamadas` | telefone, sala, inicio, fim, desfecho, transcricao, apagar_em, paciente_id, identidade_verificada_em, tentativas_identidade, consentimento_em, consentimento_recusado_em | `paciente_id` é o paciente escolhido na chamada. Trocar de paciente desfaz a verificação, mas não zera as tentativas. As colunas de consentimento entram na T3.2. O `telefone` passa a aceitar nulo (número oculto) na T4.6 |
 | `pedidos_retorno` | protocolo (único), chamada_id, telefone, motivo, status, criado_em | Pedidos de retorno da H7 |
 | `conhecimento_documentos` | titulo, arquivo, status, ativo | |
 | `conhecimento_trechos` | documento_id, ordem, texto, embedding `vector(768)`, tsv `tsvector` | Índice HNSW + GIN. `tsv` é gerado no banco a partir de `texto` |
@@ -273,6 +278,7 @@ Nenhuma ferramenta recebe telefone, `paciente_id` da sessão ou `clinica_id` com
 | Ferramenta | Entrada | Saída |
 | --- | --- | --- |
 | `identificar_chamador` | — | lista de pacientes do telefone `{paciente_id, primeiro_nome}`, vazia se não houver. Com um único paciente, ele já fica selecionado na chamada |
+| `registrar_consentimento` | aceitou | resposta gravada na chamada (entra na T3.2). Sem consentimento dado, a API recusa as ferramentas de identidade e as que mudam a agenda, com o motivo `consentimento_ausente` |
 | `selecionar_paciente` | paciente_id | paciente selecionado na chamada. Desfaz qualquer verificação anterior |
 | `cadastrar_paciente` | nome, data_nascimento | paciente, que fica selecionado na chamada |
 | `verificar_identidade` | data_nascimento | `ok` true/false para o paciente selecionado (3 tentativas por chamada) |
@@ -389,11 +395,11 @@ São 7 fases, cada uma terminando em algo que roda e pode ser testado. As fases 
 
 **Fase 3 — Agente de voz (sem telefone)**
 
-- [ ] T3.1 Subir `livekit` local e o agente com `LiveKitRunner`, `McpToolset` x2 e `LiveKitToolset`.
-- [ ] T3.2 Prompt do sistema em `agent/prompts/`: persona, consentimento, regra de confirmação, limites clínicos, como falar datas e horários.
+- [ ] T3.1 Subir `livekit` local e o agente com `LiveKitRunner`, `McpToolset` x2 e `LiveKitToolset`. O nome do modelo vem de `AGENTE_MODELO_VOZ`. Testar `gemini-3.1-flash-live-preview` e `gemini-2.5-flash-native-audio-latest`, com chave do AI Studio, e escolher pela latência e pela qualidade do português.
+- [ ] T3.2 Prompt do sistema em `agent/prompts/`: persona, consentimento, regra de confirmação, limites clínicos, como falar datas e horários. Consentimento: uma migration adiciona `consentimento_em` e `consentimento_recusado_em` a `chamadas`, e o `mcp-clinica` ganha `registrar_consentimento`, sua 13ª ferramenta. A API, e não o prompt, recusa com `consentimento_ausente` as ferramentas de identidade, `segurar_horario`, `confirmar_agendamento`, `listar_meus_agendamentos`, `remarcar_agendamento`, `cancelar_agendamento` e `registrar_pedido_retorno`. O cadastro por voz grava `pacientes.consentimento_em`, e o `chamada.encerrada` descarta a transcrição quando não houve consentimento. O prompt também manda dizer que não sabe quando os trechos da busca não trouxerem a resposta (H2).
 - [ ] T3.3 `DatabaseSessionService` no Postgres, com usuário e schema próprios para as sessões do ADK.
 - [ ] T3.4 Testar pelo navegador com o LiveKit Agents Playground ou o `agent-starter-react` (só para teste interno). Criar o `scripts/seed.py`, com dados fictícios de exemplo para o teste por voz: clínica, 2 dentistas, procedimentos com sinônimos, grade semanal, um bloqueio de almoço e alguns pacientes com telefones fictícios. Telefones reais ficam só no `.env`, nunca no seed. *Pronto quando:* agendar, remarcar e cancelar funcionam por voz.
-- [ ] T3.5 Medir latência (meta: mediana ≤ 1,5 s).
+- [ ] T3.5 Medir latência (meta: mediana ≤ 1,5 s). Reavaliar a meta da busca RAG (p95 ≤ 800 ms) com o cache de embeddings em uso real.
 
 **Fase 4 — Telefonia pelo chip**
 
@@ -402,6 +408,7 @@ São 7 fases, cada uma terminando em algo que roda e pode ser testado. As fases 
 - [ ] T4.3 Configurar o gateway: rota GSM → IP para o `livekit-sip`, codec G.711 e caller ID repassado.
 - [ ] T4.4 Teste real com 2 celulares ligando ao mesmo tempo para o mesmo horário. *Pronto quando:* o critério da H4 passa.
 - [ ] T4.5 Transferência para a recepção (SIP REFER ou discagem para ramal/celular).
+- [ ] T4.6 Número oculto: a chamada é aceita sem telefone (`chamadas.telefone` passa a aceitar nulo, e o `POST /chamadas` deixa de exigir o campo). A API recusa, com o motivo `telefone_oculto`, as mesmas ferramentas bloqueadas pela falta de consentimento, e o agente só tira dúvidas e transfere. Sem telefone não há pedido de retorno: fora do horário comercial, o agente avisa e pede para ligar de novo. Normalizar para E.164 o caller ID recebido do gateway.
 
 **Fase 5 — Painel administrativo**
 
@@ -438,8 +445,8 @@ São 7 fases, cada uma terminando em algo que roda e pode ser testado. As fases 
 - **Dependência de internet:** sem internet não há Gemini Live, e a ligação precisa cair numa mensagem gravada ou ser desviada para a recepção. Isso está previsto no runbook (T6.4).
 - **Rede móvel:** as operadoras vêm desligando 2G/3G. Compre um gateway com 4G e VoLTE e confirme a compatibilidade com a operadora do chip.
 - **Qualidade de áudio do celular (8 kHz):** números e nomes podem ser mal entendidos. Mitigação: o agente sempre repete datas, horários e nomes antes de confirmar (Constituição, item 4).
-- **Latência da busca RAG:** em 02/11/2026, a busca completa mediu mediana de 467 ms e p95 de 764 ms, contra a meta de p95 ≤ 300 ms. Quase todo o tempo é do embedding no Gemini (mediana de 472 ms e p95 de 667 ms, medidos em separado). A consulta ao banco pesa pouco, então a meta só seria atingida com outra rede ou com um modelo de embedding local, que é uma decisão em aberto.
-- **Modelo de voz:** `gemini-live-2.5-flash-native-audio` não aparece na lista de modelos da chave atual da API do Gemini, e o `gemini-2.5-flash` já responde 404 para ela. Confirmar o modelo antes da T3.1.
+- **Latência da busca RAG:** em 02/11/2026, antes do cache, a busca completa mediu mediana de 467 ms e p95 de 764 ms, e quase todo o tempo é do embedding no Gemini. A meta passou a ser p95 ≤ 800 ms, com pouca folga numa pergunta nova; o cache só acelera perguntas repetidas. Com o cache, as mesmas 30 perguntas mediram p95 de 630 ms na primeira vez e de 3 ms ao repetir. Reavaliar na T3.5. Se não bastar, a alternativa é um modelo de embedding local, que continua como decisão em aberto.
+- **Modelo de voz:** os dois candidatos são de pré-lançamento ou apontam para a versão mais recente (`-latest`) e podem mudar sem aviso. Por isso o nome fica em `AGENTE_MODELO_VOZ`, e não no código.
 - **Uso do chip pela operadora:** algumas operadoras restringem o uso de chips pré-pagos em gateways. Verifique o contrato e prefira um plano empresarial.
 
 ## Decisões tomadas pelo agente
@@ -463,7 +470,7 @@ Decisões técnicas tomadas durante a implementação, com a opção mais conser
 | T2.1 | `POST /chamadas` só aceita telefone em E.164 e exige `Idempotency-Key` (o agente usará a sala como chave). | Uma ligação repetida no retry não duplica a chamada. Normalizar o caller ID do gateway e tratar número oculto fica para as fases 3 e 4. |
 | T2.1 | O protocolo do pedido de retorno tem 8 dígitos aleatórios. | O agente precisa falar o protocolo em voz alta. |
 | T2.1 | Na falha de `segurar_horario`, o MCP devolve em `alternativas` só as até 3 opções faladas. A rota `/holds` continua devolvendo todos os candidatos. | Reduz o que o modelo precisa ler durante a ligação. |
-| T2.1 | `pacientes.consentimento_em` continua nulo no cadastro por voz, porque ainda não há ferramenta nem fluxo que registrem o consentimento. | Não marcar um consentimento que ninguém coletou. O registro precisa ser definido junto com o prompt da T3.2. |
+| T2.1 | `pacientes.consentimento_em` continua nulo no cadastro por voz até a T3.2, que cria o registro do consentimento. | Não marcar um consentimento que ninguém coletou. |
 | T2.2 | A contagem de tokens é uma estimativa: cerca de 4 caracteres por token, ou seja, trechos de até 2000 caracteres e sobreposição de até 300, em frases inteiras. | "Cerca de 500 tokens" não pede precisão, e isso dispensa um tokenizador. |
 | T2.2 | Um título nunca fica no meio de um trecho, e cada trecho começa com o caminho de títulos ("Preços > Limpeza"). Seções curtas não são juntadas. | Melhora a precisão da busca: o trecho leva o contexto do título. |
 | T2.2 | Os embeddings são gerados antes da transação. Na mesma transação, o worker apaga os trechos antigos e grava os novos. Se a indexação falhar, os trechos antigos ficam valendo e o documento fica com status `erro`. | A busca nunca vê um documento pela metade, e o banco não fica preso a uma chamada de rede. |
@@ -481,3 +488,5 @@ Decisões técnicas tomadas durante a implementação, com a opção mais conser
 | T2.5 | O `scripts/seed.py` foi antecipado da T3.4, porque o teste dos MCPs precisa de dados. Ele já cobre o que a T3.4 pede e também indexa a base de exemplo. | Evita um seed temporário só para a Fase 2. O almoço vira um bloqueio por dia útil nos próximos 90 dias, porque `bloqueios` não é recorrente, e rodar o seed de novo estende a janela. |
 | T2.5 | O agente de texto (`services/agent/adk_texto`) usa `header_provider` do `McpToolset` para enviar o `X-Chamada-Id`, com um prompt mínimo. O modelo padrão é `gemini-flash-latest`, porque o `gemini-2.5-flash` responde 404 para esta chave. | Valida na prática o mecanismo de headers dinâmicos que a Fase 3 vai usar. |
 | T2.5 | O `mcp-conhecimento` também depende de `api` saudável no Compose. | As tabelas vêm das migrations, aplicadas pela API ao subir. É o mesmo motivo do worker. |
+| T2.5 | O teste com o MCP Inspector foi feito pela linha de comando. A interface web ficou de fora, por decisão do usuário. | A linha de comando cobre listar e chamar as ferramentas, com o header da chamada. |
+| Ajuste | O cache dos embeddings das perguntas fica na memória do `mcp-conhecimento`, com até 1024 perguntas. A chave é o hash da pergunta normalizada (sem diferença de caixa e de espaços), e falhas não entram no cache. | O texto da pergunta pode ter dado de saúde: o hash evita mantê-lo na memória, e o cache some ao reiniciar. Com 768 dimensões, ocupa cerca de 25 MB no pior caso. |
