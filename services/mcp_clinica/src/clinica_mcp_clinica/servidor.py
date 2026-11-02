@@ -222,37 +222,61 @@ def criar_servidor(api: httpx.AsyncClient) -> MCPServer:
         return await chamar(ctx, "GET", "/agendamentos/meus")
 
     @mcp.tool()
-    async def remarcar_agendamento(
+    async def preparar_remarcacao(
         agendamento_id: UUID, hold_id: UUID, ctx: Context
     ) -> dict[str, Any]:
-        """Troca uma consulta pelo novo horário já segurado, numa única operação.
+        """Primeira etapa de remarcar: valida a troca e devolve os dois horários, sem mudar nada.
 
-        Exige identidade verificada e um sim explícito do paciente. O horário antigo só é liberado
-        junto com a confirmação do novo.
+        Exige identidade verificada e um horário novo já segurado. Depois, repita fala_atual e
+        fala_nova ao paciente e pergunte se pode trocar.
+        """
+        return await chamar(
+            ctx,
+            "POST",
+            f"/agendamentos/{agendamento_id}/remarcar/preparar",
+            corpo={"hold_id": str(hold_id)},
+        )
+
+    @mcp.tool()
+    async def executar_remarcacao(
+        agendamento_id: UUID, hold_id: UUID, ctx: Context
+    ) -> dict[str, Any]:
+        """Segunda etapa de remarcar: troca a consulta pelo horário segurado, numa única operação.
+
+        Só depois de preparar_remarcacao e de um sim explícito do paciente. O horário antigo só é
+        liberado junto com a confirmação do novo.
         """
         return await chamar(
             ctx,
             "POST",
             f"/agendamentos/{agendamento_id}/remarcar",
             corpo={"hold_id": str(hold_id)},
-            ferramenta_idempotente="remarcar_agendamento",
+            ferramenta_idempotente="executar_remarcacao",
         )
 
     @mcp.tool()
-    async def cancelar_agendamento(
+    async def preparar_cancelamento(agendamento_id: UUID, ctx: Context) -> dict[str, Any]:
+        """Primeira etapa de cancelar: valida e devolve a fala da consulta, sem mudar nada.
+
+        Exige identidade verificada. Depois, repita a fala ao paciente e pergunte se pode cancelar.
+        """
+        return await chamar(ctx, "POST", f"/agendamentos/{agendamento_id}/cancelar/preparar")
+
+    @mcp.tool()
+    async def executar_cancelamento(
         agendamento_id: UUID, ctx: Context, motivo: str | None = None
     ) -> dict[str, Any]:
-        """Cancela uma consulta e devolve o aviso sobre a política de cancelamento.
+        """Segunda etapa de cancelar: cancela a consulta e devolve o aviso sobre a política.
 
-        Exige identidade verificada e um sim explícito do paciente. Registre o motivo se o paciente
-        disser.
+        Só depois de preparar_cancelamento e de um sim explícito do paciente. Registre o motivo se
+        o paciente disser.
         """
         return await chamar(
             ctx,
             "POST",
             f"/agendamentos/{agendamento_id}/cancelar",
             corpo={"motivo": motivo},
-            ferramenta_idempotente="cancelar_agendamento",
+            ferramenta_idempotente="executar_cancelamento",
         )
 
     @mcp.tool()

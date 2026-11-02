@@ -1,7 +1,7 @@
 import re
 import unicodedata
 from collections.abc import Iterable, Sequence
-from datetime import date, datetime, time
+from datetime import date, datetime, time, timedelta
 from typing import Protocol
 from uuid import UUID
 from zoneinfo import ZoneInfo
@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from clinica_api import agenda
 from clinica_api.agenda import Contexto, ErroAgenda
 from clinica_api.esquemas import (
+    CancelamentoPreparado,
     ConsultaFutura,
     ConsultasFuturas,
     HoldFalado,
@@ -19,6 +20,8 @@ from clinica_api.esquemas import (
     OpcoesHorario,
     ProcedimentoResumo,
     Procedimentos,
+    RemarcacaoPreparada,
+    RemarcarEntrada,
     SegurarEntrada,
     SegurarPorNomeEntrada,
     Turno,
@@ -263,3 +266,62 @@ async def listar_meus_agendamentos(sessao: AsyncSession, contexto: Contexto) -> 
             )
         )
     return ConsultasFuturas(consultas=consultas)
+
+
+async def _falar_consulta(sessao: AsyncSession, consulta: Agendamento, fuso: ZoneInfo) -> str:
+    assert consulta.periodo.lower is not None
+    procedimento = await sessao.get_one(Procedimento, consulta.procedimento_id)
+    dentista = await sessao.get_one(Dentista, consulta.dentista_id)
+    return (
+        f"{procedimento.nome}, {falar_horario(consulta.periodo.lower, fuso)}, com {dentista.nome}"
+    )
+
+
+def _exigir_voz_verificada(contexto: Contexto) -> None:
+    if not contexto.voz:
+        raise ErroAgenda("exige_chamada")
+    agenda.exigir_identidade(contexto)
+
+
+async def preparar_cancelamento(
+    sessao: AsyncSession, contexto: Contexto, agendamento_id: UUID
+) -> CancelamentoPreparado:
+    """Só lê: valida o cancelamento e devolve o que repetir ao paciente antes do sim."""
+    _exigir_voz_verificada(contexto)
+    consulta = await agenda.consulta_alteravel(sessao, contexto, agendamento_id)
+    assert consulta.periodo.lower is not None
+    clinica = await sessao.get_one(Clinica, contexto.clinica_id)
+    horas = clinica.politica_cancelamento_horas
+    agora = (await sessao.execute(select(func.now()))).scalar_one()
+    return CancelamentoPreparado(
+        agendamento_id=agendamento_id,
+        fala=await _falar_consulta(sessao, consulta, ZoneInfo(clinica.fuso)),
+        dentro_do_prazo=consulta.periodo.lower - agora >= timedelta(hours=horas),
+        politica_cancelamento_horas=horas,
+    )
+
+
+async def preparar_remarcacao(
+    sessao: AsyncSession, contexto: Contexto, agendamento_id: UUID, entrada: RemarcarEntrada
+) -> RemarcacaoPreparada:
+    """Só lê: valida a troca e devolve os dois horários para repetir ao paciente antes do sim."""
+    _exigir_voz_verificada(contexto)
+    consulta = await agenda.consulta_alteravel(sessao, contexto, agendamento_id)
+    hold = await sessao.scalar(
+        select(Agendamento).where(
+            Agendamento.id == entrada.hold_id,
+            Agendamento.clinica_id == contexto.clinica_id,
+            Agendamento.chamada_id == contexto.chamada_id,
+            Agendamento.status == "segurado",
+            Agendamento.expira_em > func.now(),
+        )
+    )
+    if hold is None:
+        raise ErroAgenda("hold_perdido")
+    fuso = await _fuso(sessao, contexto.clinica_id)
+    return RemarcacaoPreparada(
+        agendamento_id=agendamento_id,
+        hold_id=entrada.hold_id,
+        fala_atual=await _falar_consulta(sessao, consulta, fuso),
+        fala_nova=await _falar_consulta(sessao, hold, fuso),
+    )

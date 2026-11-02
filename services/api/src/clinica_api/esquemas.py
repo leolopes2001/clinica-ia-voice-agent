@@ -138,6 +138,22 @@ class AgendamentoConfirmado(BaseModel):
     fim_periodo: datetime
 
 
+class CancelamentoPreparado(BaseModel):
+    ok: Literal[True] = True
+    agendamento_id: UUID
+    fala: str
+    dentro_do_prazo: bool
+    politica_cancelamento_horas: int
+
+
+class RemarcacaoPreparada(BaseModel):
+    ok: Literal[True] = True
+    agendamento_id: UUID
+    hold_id: UUID
+    fala_atual: str
+    fala_nova: str
+
+
 class AgendamentoCancelado(BaseModel):
     ok: Literal[True] = True
     agendamento_id: UUID

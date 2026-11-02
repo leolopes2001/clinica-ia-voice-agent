@@ -90,10 +90,11 @@ O paciente liga para o número da clínica e resolve tudo por voz, sem esperar a
 - [ ] O agente confirma nome e data de nascimento. A verificação vale só para o paciente escolhido, e a chamada registra qual foi.
 - [ ] O agente lista as consultas futuras do paciente escolhido e pergunta qual remarcar.
 - [ ] O horário antigo só é liberado depois que o novo estiver confirmado (operação atômica).
+- [ ] Remarcar tem duas etapas, preparar e executar. Executar só é permitido se a última fala transcrita do paciente, feita depois de preparar, contiver uma confirmação explícita. "Essa mesma" e "pode ser" não contam.
 
 **H6 — Cancelar.** Como paciente, quero cancelar uma consulta.
 
-- [ ] Exige a mesma identificação da H5 e confirmação falada.
+- [ ] Exige a mesma identificação da H5 e confirmação falada, com as mesmas duas etapas e a mesma trava da H5.
 - [ ] O agente informa a política de cancelamento (vinda do RAG) e registra o motivo, se o paciente disser.
 - [ ] O horário volta a ficar livre na hora, e o painel atualiza sem recarregar.
 
@@ -287,8 +288,10 @@ Nenhuma ferramenta recebe telefone, `paciente_id` da sessão ou `clinica_id` com
 | `segurar_horario` | procedimento, dentista, inicio | `hold_id` + `expira_em`, ou `ocupado` + alternativas |
 | `confirmar_agendamento` | hold_id | agendamento confirmado ou `hold_perdido` |
 | `listar_meus_agendamentos` | — | consultas futuras do paciente selecionado (exige identidade verificada) |
-| `remarcar_agendamento` | agendamento_id, hold_id | agendamento novo |
-| `cancelar_agendamento` | agendamento_id, motivo? | ok + aviso de política |
+| `preparar_remarcacao` | agendamento_id, hold_id | fala do horário atual e do novo, sem mudar nada |
+| `executar_remarcacao` | agendamento_id, hold_id | agendamento novo, ou `confirmacao_ausente` / `preparo_ausente` pela trava do agente |
+| `preparar_cancelamento` | agendamento_id | fala da consulta e prazo da política, sem mudar nada |
+| `executar_cancelamento` | agendamento_id, motivo? | ok + aviso de política, ou `confirmacao_ausente` / `preparo_ausente` pela trava do agente |
 | `registrar_pedido_retorno` | motivo | protocolo |
 
 **`mcp-conhecimento`** (somente leitura):
@@ -400,6 +403,7 @@ São 7 fases, cada uma terminando em algo que roda e pode ser testado. As fases 
 - [x] T3.3 `DatabaseSessionService` no Postgres, com usuário e schema próprios para as sessões do ADK.
 - [x] T3.4 Testar pelo navegador com o LiveKit Agents Playground ou o `agent-starter-react` (só para teste interno). Criar o `scripts/seed.py`, com dados fictícios de exemplo para o teste por voz: clínica, 2 dentistas, procedimentos com sinônimos, grade semanal, um bloqueio de almoço e alguns pacientes com telefones fictícios. Telefones reais ficam só no `.env`, nunca no seed. *Pronto quando:* agendar, remarcar e cancelar funcionam por voz.
 - [x] T3.5 Medir latência (meta: mediana ≤ 1,5 s). Reavaliar a meta da busca RAG (p95 ≤ 800 ms) com o cache de embeddings em uso real.
+- [x] T3.6 Trava de confirmação abaixo do modelo: remarcar e cancelar em duas etapas (preparar → executar), e um `before_tool_callback` no agente que só permite executar com confirmação explícita na última fala transcrita do paciente, feita depois de preparar. *Pronto quando:* "Essa mesma" não cancela, e "Sim, pode cancelar" cancela, por voz.
 
 **Fase 4 — Telefonia pelo chip**
 
@@ -497,7 +501,7 @@ Decisões técnicas tomadas durante a implementação, com a opção mais conser
 | T3.1 | A abertura vem de um evento de usuário gravado na sessão antes de o modelo conectar. | O modelo só fala depois de uma fala do usuário, e o `LiveKitRunner` não expõe a fila. O ADK já envia o histórico ao conectar. |
 | T3.1 | `GET /clinicas` na API, com id e nome. O agente usa a única clínica da instalação, ou `AGENTE_CLINICA_ID` se configurado. | O agente precisa do nome para se apresentar e não toca no banco. Evita um passo manual de copiar o id depois do seed. |
 | T3.1 | Sem SIP, o telefone vem dos metadados do despacho, e só com `AGENTE_PERMITIR_TELEFONE_DE_TESTE`. Com SIP, o atributo do SIP sempre vence. A T4.6 deve desligar essa opção no ambiente da clínica. | O navegador não tem número de telefone. Os metadados só podem ser escritos com a chave do LiveKit, nunca pelo LLM. |
-| T3.2 | A recusa de consentimento vale até o fim da chamada: um "sim" depois não a desfaz. Recusar depois de aceitar apaga o aceite, tira o paciente selecionado e desfaz a verificação. | É a leitura mais protetora da H1, e uma recusa nunca vira aceite por erro de áudio. O custo é a pessoa que mudar de ideia precisar da recepção ou de outra ligação. |
+| T3.2 | Confirmado pelo usuário em 02/11/2026. A recusa de consentimento vale até o fim da chamada: um "sim" depois não a desfaz. Recusar depois de aceitar apaga o aceite, tira o paciente selecionado e desfaz a verificação. | É a leitura mais protetora da H1, e uma recusa nunca vira aceite por erro de áudio. O custo é a pessoa que mudar de ideia precisar da recepção ou de outra ligação. |
 | T3.2 | A checagem de consentimento fica em uma dependência das rotas da API e só vale para `origem=voz`. Rota nova de voz: `POST /chamadas/consentimento`, sem `Idempotency-Key`, porque repetir a mesma resposta dá o mesmo resultado. | A regra fica na API, num único lugar, como pede a T3.2. O painel continua sem consentimento de chamada. |
 | T3.2 | O cadastro por voz copia `consentimento_em` da chamada, e também preenche o campo de um paciente que já existia sem ele. | Se a mesma pessoa é "cadastrada" de novo com consentimento, o registro passa a ter esse consentimento. |
 | T3.2 | O texto do consentimento e a apresentação como "recepcionista virtual" estão em `prompts/recepcionista.md`. O texto é um rascunho, e a revisão é da T6.1. | A H1 exige o pedido. A pessoa precisa saber que fala com uma recepcionista virtual. |
@@ -511,6 +515,11 @@ Decisões técnicas tomadas durante a implementação, com a opção mais conser
 | T3.4 | `ToolsetEmSerie` executa uma ferramenta MCP por vez, na ordem pedida pelo modelo. | O modelo pediu `verificar_identidade` e `listar_meus_agendamentos` no mesmo turno, e o ADK rodou as duas juntas: a API recusou a segunda, e a conversa desandou. Só o prompt não bastou. |
 | T3.4 | `end_call` espera 4 s antes de desligar. | O `LiveKitRunner` descarta o áudio que falta ao desligar, o que cortaria a despedida. O tempo é fixo porque o ADK não expõe o fim da reprodução. |
 | T3.4 | `scripts/conversa_voz.py` conversa com o agente com voz sintetizada (`say`, do macOS) e mede a latência. Agendar, remarcar e cancelar passaram assim, com o resultado conferido no banco. A página foi testada no Chrome com microfone simulado. | Permite repetir os fluxos sem falar. Não substitui o teste com voz humana, que é o critério da fase. |
-| T3.4 | A confirmação do paciente é regra do prompt, e nenhuma camada abaixo confere se houve um "sim". No teste, antes de reforçar o prompt, "Essa mesma" chegou a ser aceito como confirmação de um cancelamento. | A API não ouve a conversa. O item 4 da Constituição depende do modelo, e o paciente pode confirmar errado por áudio ruim. A repetição dos dados continua sendo a defesa. É o ponto a observar no teste por voz. |
+| T3.4 | A confirmação do paciente é regra do prompt. No teste, antes de reforçar o prompt, "Essa mesma" chegou a ser aceito como confirmação de um cancelamento. | A API não ouve a conversa. A T3.6 pôs uma trava abaixo do modelo para remarcar e cancelar. `confirmar_agendamento` continua só no prompt. |
 | T3.5 | O silêncio de fim de fala fica no padrão do Gemini, ajustável por `AGENTE_SILENCIO_FIM_DE_FALA_MS`. | Encurtar ganha cerca de 0,4 s, mas pode cortar quem faz pausas ao ditar uma data, e cada data errada gasta uma das 3 tentativas. A escolha depende de ouvir, e fica para o teste do usuário. |
 | T3.5 | As metas de latência e da busca RAG não foram alteradas, mesmo sem serem atingidas. Os números estão nos riscos. | Mudar uma meta, trocar o modelo de embedding ou fazer o agente dizer "um instante" antes de buscar muda o que o paciente percebe, e a decisão é do usuário. |
+| T3.6 | O preparar só lê: a API valida e devolve a fala, sem gravar nada. Quem exige o preparo é a trava do agente, na memória do processo da ligação, e não há tabela nova. As rotas `/remarcar` e `/cancelar` da API não mudaram, para o painel usá-las na T5.2. | A decisão do usuário põe a trava no `before_tool_callback`. A API não ouve a conversa, então um preparo gravado nela não provaria o "sim". |
+| T3.6 | Contam como confirmação: "sim", "confirmo", "pode confirmar", "pode cancelar", "pode remarcar" e "pode trocar". Qualquer "não", "pode ser", "talvez", "acho", "espera", "mas", "depende" ou "sei lá", ou uma pergunta, anula a confirmação. | Na dúvida, a trava recusa e o agente pergunta de novo. Errar para o lado da recusa custa uma pergunta, e o erro oposto cancela uma consulta. Um "sim, não tem problema" também é recusado. |
+| T3.6 | A fala precisa ter começado depois do preparo, e os argumentos de executar precisam ser os mesmos do preparo. Uma recusa da trava não gasta o preparo; qualquer outra resposta de executar gasta. | Um "sim" dado antes, como o do consentimento, não confirma nada, nem vale para outra consulta ou outro horário. |
+| T3.6 | A trava observa os eventos ao vivo com um `Runner` próprio, e espera até 2 s pela transcrição. Depois de ver a confirmação, espera 0,3 s por mais trechos. | No Gemini 3.x, a chamada de ferramenta chega antes da transcrição final, e os trechos parciais não entram na sessão. Ler `session.events` julgaria a fala anterior. Se a transcrição demorar mais de 2 s, o paciente só ouve a pergunta de novo. |
+| T3.6 | A trava cobre remarcar e cancelar, como decidido. `confirmar_agendamento` continua só com a regra do prompt. | O item 4 da Constituição também vale para agendar, mas o pedido foi para as duas operações. Fica registrado como lacuna a decidir. |

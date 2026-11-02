@@ -153,6 +153,6 @@ async def test_adk_chama_a_ferramenta_com_o_header_da_chamada(
 
     assert [h["X-Chamada-Id"] for h in api_falsa.cabecalhos] == ["chamada-do-teste"]
     assert "identificar_chamador" in modelo.ferramentas_vistas
-    assert len(modelo.ferramentas_vistas) == 13
+    assert len(modelo.ferramentas_vistas) == 15
     respostas = [e for e in eventos if e.get_function_responses()]
     assert respostas

@@ -30,6 +30,7 @@ from clinica_agent.recepcionista import (
     montar_prompt,
 )
 from clinica_agent.resumo import resumir
+from clinica_agent.trava import TravaDeConfirmacao
 
 TELEFONE = "+5511900000001"
 
@@ -105,7 +106,7 @@ def test_prompt_traz_clinica_e_data_no_fuso_da_clinica() -> None:
 def test_modelo_vem_da_configuracao() -> None:
     config = ConfigAgente(modelo_voz="modelo-da-config")
     chamada = ChamadaAberta("c1", uuid4(), "Clínica X")
-    agente = criar_agente(config, chamada)
+    agente = criar_agente(config, chamada, TravaDeConfirmacao())
     assert agente.model == "modelo-da-config"
     assert len(agente.tools) == 3
 
@@ -179,8 +180,8 @@ def test_ninguem_falou_e_abandono() -> None:
     ("ferramenta", "desfecho"),
     [
         ("confirmar_agendamento", "agendou"),
-        ("remarcar_agendamento", "remarcou"),
-        ("cancelar_agendamento", "cancelou"),
+        ("executar_remarcacao", "remarcou"),
+        ("executar_cancelamento", "cancelou"),
     ],
 )
 def test_desfecho_vem_da_ferramenta_que_deu_certo(ferramenta: str, desfecho: str) -> None:
@@ -290,3 +291,14 @@ def test_pagina_so_usa_telefones_do_seed() -> None:
 def test_opcional_vazia_no_ambiente_nao_derruba_o_agente(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("AGENTE_SILENCIO_FIM_DE_FALA_MS", "")
     assert ConfigAgente().silencio_fim_de_fala_ms is None
+
+
+def test_recusa_da_trava_nao_vira_desfecho() -> None:
+    resposta = types.FunctionResponse(
+        name="executar_cancelamento", response={"ok": False, "motivo": "confirmacao_ausente"}
+    )
+    recusa = Event(
+        author="recepcionista",
+        content=types.Content(role="user", parts=[types.Part(function_response=resposta)]),
+    )
+    assert resumir([_falou("essa mesma"), recusa]).desfecho == "duvida"

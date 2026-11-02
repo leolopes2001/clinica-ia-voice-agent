@@ -9,8 +9,8 @@ from google.adk.events import Event
 
 _DESFECHO_POR_FERRAMENTA = {
     "confirmar_agendamento": "agendou",
-    "remarcar_agendamento": "remarcou",
-    "cancelar_agendamento": "cancelou",
+    "executar_remarcacao": "remarcou",
+    "executar_cancelamento": "cancelou",
     "transfer_call": "transferiu",
 }
 
@@ -35,7 +35,8 @@ def resultado_da_ferramenta(resposta: dict[str, Any] | None) -> dict[str, Any]:
             continue
         if isinstance(lido, dict):
             return lido
-    return {}
+    # Sem o envelope do MCP: é a recusa da trava de confirmação, que nem chega à ferramenta.
+    return resposta
 
 
 def resumir(eventos: Iterable[Event]) -> ResumoDaLigacao:
