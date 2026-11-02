@@ -114,7 +114,7 @@ Para voltar ao padrão, rode `docker compose up -d agent` sem a variável.
 
 | Sintoma | O que fazer |
 | --- | --- |
-| Clico em **Ligar** e ela nunca fala | Veja `docker compose logs agent --tail 50`. Confira a `GOOGLE_API_KEY` e se o seed já rodou: sem clínica, o agente não atende |
+| Clico em **Ligar** e ela nunca fala | Veja `docker compose logs agent --tail 50`. Confira a `GOOGLE_API_KEY` e se o seed já rodou: sem clínica, o agente não atende. A mensagem `prepayment credits are depleted` indica que os créditos do Gemini acabaram: recarregue no AI Studio |
 | A página não abre | Confira se usou `--profile teste` e veja `docker compose --profile teste ps` |
 | Fala, mas não me ouve | Veja a permissão do microfone no cadeado da barra de endereço do Chrome e o microfone padrão do sistema |
 | Ela se interrompe sozinha | Use fones de ouvido |
