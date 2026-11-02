@@ -383,7 +383,7 @@ São 7 fases, cada uma terminando em algo que roda e pode ser testado. As fases 
 - [x] T2.1 `POST /chamadas` e os endpoints de identidade na API (identificar, selecionar, cadastrar e verificar), e `mcp-clinica` com as 12 ferramentas, resolvendo identidade pelo `X-Chamada-Id`. Em `listar_horarios_livres`, filtrar por `turno` e depois escolher as até 3 opções variadas entre os candidatos.
 - [x] T2.2 Pipeline de ingestão no worker (extração, chunking, embeddings, gravação).
 - [x] T2.3 `mcp-conhecimento` com busca híbrida e RRF.
-- [ ] T2.4 Conjunto de 30 perguntas de avaliação. *Pronto quando:* o trecho certo aparece no top 3 em ≥ 90% delas.
+- [x] T2.4 Conjunto de 30 perguntas de avaliação. *Pronto quando:* o trecho certo aparece no top 3 em ≥ 90% delas.
 - [ ] T2.5 Testar os dois MCPs com o MCP Inspector e com um agente ADK em modo texto (`adk web`).
 
 **Fase 3 — Agente de voz (sem telefone)**
@@ -473,3 +473,5 @@ Decisões técnicas tomadas durante a implementação, com a opção mais conser
 | T2.3 | Se o embedding da pergunta falhar, a busca segue só por texto, com limite de 2 s e 2 tentativas. | O paciente está na linha: é melhor responder com menos precisão do que deixá-lo esperando. |
 | T2.3 | Não há nota de corte de relevância: a busca devolve os 3 melhores, mesmo fracos. | A spec não define corte. Quem decide se o trecho responde é o agente, e o prompt da T3.2 precisa mandá-lo dizer que não sabe quando o trecho não trouxer a resposta (H2). |
 | T2.3 | O servidor abre as transações em modo somente leitura, e a clínica vem sempre de `chamadas.clinica_id`, ignorando `X-Clinica-Id`. | Garante no banco o "somente leitura" do contrato, e o LLM não influi na clínica. |
+| T2.4 | A base da clínica fictícia fica em `exemplos/conhecimento/*.md`, e as 30 perguntas em `tests/avaliacao/perguntas.json`. Uma pergunta só conta como acerto se o documento certo vier no top 3 e a resposta esperada estiver no texto devolvido, já recortado em 800 caracteres. | É mais rígido que o critério da spec e mede o que o agente de fato recebe. |
+| T2.4 | A avaliação usa os embeddings reais e é ignorada sem `GOOGLE_API_KEY`. O repositório ainda não tem CI: quando tiver, a chave precisa estar nos segredos dele. | O resultado com embeddings falsos não mediria nada. |
