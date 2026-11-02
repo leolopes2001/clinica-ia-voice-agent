@@ -1,0 +1,1 @@
+"""Painel administrativo da clínica."""

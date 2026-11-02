@@ -1,0 +1,35 @@
+[tool.uv.workspace]
+members = ["packages/*", "services/*"]
+
+[dependency-groups]
+dev = [
+    "mypy",
+    "pre-commit",
+    "pytest",
+    "ruff",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "ASYNC"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+explicit_package_bases = true
+mypy_path = [
+    "$MYPY_CONFIG_FILE_DIR/packages/core/src",
+    "$MYPY_CONFIG_FILE_DIR/services/api/src",
+    "$MYPY_CONFIG_FILE_DIR/services/painel/src",
+    "$MYPY_CONFIG_FILE_DIR/services/mcp_clinica/src",
+    "$MYPY_CONFIG_FILE_DIR/services/mcp_conhecimento/src",
+    "$MYPY_CONFIG_FILE_DIR/services/agent/src",
+    "$MYPY_CONFIG_FILE_DIR/services/worker/src",
+]
+
+[tool.pytest.ini_options]
+addopts = "--import-mode=importlib"
+testpaths = ["tests", "packages", "services"]

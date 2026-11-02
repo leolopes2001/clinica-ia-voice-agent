@@ -347,7 +347,7 @@ São 7 fases, cada uma terminando em algo que roda e pode ser testado. As fases 
 
 **Fase 0 — Fundação**
 
-- [ ] T0.1 Monorepo com `uv` workspaces, `ruff`, `mypy`, `pytest`, pre-commit.
+- [x] T0.1 Monorepo com `uv` workspaces, `ruff`, `mypy`, `pytest`, pre-commit.
 - [ ] T0.2 `docker-compose.yml` com postgres, rabbitmq e redis, mais health checks. *Pronto quando:* `docker compose up` sobe tudo saudável.
 - [ ] T0.3 `packages/core`: settings (`pydantic-settings`), conexão async ao banco e cliente RabbitMQ com declaração de exchanges e filas.
 

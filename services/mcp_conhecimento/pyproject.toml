@@ -1,0 +1,14 @@
+[project]
+name = "clinica-mcp-conhecimento"
+version = "0.1.0"
+description = "Servidor MCP de busca na base de conhecimento"
+requires-python = ">=3.12,<3.13"
+dependencies = ["clinica-core"]
+
+[build-system]
+requires = ["uv_build>=0.12.1,<0.13"]
+build-backend = "uv_build"
+
+[tool.uv.sources]
+clinica-core = { workspace = true }
+
