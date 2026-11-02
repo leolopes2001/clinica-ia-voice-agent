@@ -30,7 +30,17 @@ PROCESSOS_OCIOSOS = 2
 # Uma ligação não dura tanto: o que passou disso é de um processo que morreu no meio.
 _IDADE_DE_SESSAO_ABANDONADA = timedelta(days=1)
 
-CONFIG_DE_VOZ = RunConfig(speech_config=types.SpeechConfig(language_code="pt-BR"))
+
+def config_de_voz(config: ConfigAgente) -> RunConfig:
+    return RunConfig(
+        speech_config=types.SpeechConfig(language_code="pt-BR"),
+        realtime_input_config=types.RealtimeInputConfig(
+            automatic_activity_detection=types.AutomaticActivityDetection(
+                silence_duration_ms=config.silencio_fim_de_fala_ms
+            )
+        ),
+    )
+
 
 server = AgentServer(num_idle_processes=PROCESSOS_OCIOSOS)
 
@@ -112,7 +122,7 @@ async def atender(ctx: JobContext) -> None:
             user_id=USUARIO_ADK,
             session_id=ctx.room.name,
             create_session=False,
-            run_config=CONFIG_DE_VOZ,
+            run_config=config_de_voz(config),
         ).start()
     finally:
         try:

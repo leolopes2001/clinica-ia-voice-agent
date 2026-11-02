@@ -207,6 +207,7 @@ services:
       GOOGLE_API_KEY: ${GOOGLE_API_KEY:-}
       AGENTE_MODELO_VOZ: ${AGENTE_MODELO_VOZ:-gemini-3.1-flash-live-preview}
       AGENTE_API_URL: http://api:8000
+      AGENTE_SILENCIO_FIM_DE_FALA_MS: ${AGENTE_SILENCIO_FIM_DE_FALA_MS:-}
       ADK_SESSOES_HOST: postgres
       ADK_SESSOES_DB: ${POSTGRES_DB:-clinica}
       ADK_SESSOES_SENHA: ${ADK_SESSOES_SENHA:-adk_sessoes}
@@ -253,6 +254,16 @@ services:
       LIVEKIT_URL_NAVEGADOR: ws://localhost:7880
     ports:
       - "127.0.0.1:8090:8090"
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - import urllib.request; urllib.request.urlopen('http://localhost:8090/')
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
     depends_on:
       agent:
         condition: service_healthy
