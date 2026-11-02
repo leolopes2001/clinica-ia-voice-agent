@@ -4,9 +4,11 @@ version = "0.1.0"
 description = "Agente de voz da recepcionista"
 requires-python = ">=3.12,<3.13"
 dependencies = [
+    # Só o driver do DatabaseSessionService (T3.3). O código do agente não importa nada de banco.
+    "asyncpg",
     "clinica-core[rabbit]",
     "fastapi",
-    "google-adk[livekit]>=2.9",
+    "google-adk[db,livekit]>=2.9",
     "httpx",
     "livekit-agents>=1.4",
     "livekit-api",

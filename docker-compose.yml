@@ -63,6 +63,8 @@ services:
       RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:-clinica}
       AGENDA_ANTECEDENCIA_MINIMA_MIN: ${AGENDA_ANTECEDENCIA_MINIMA_MIN:-120}
       AGENDA_DURACAO_HOLD_MIN: ${AGENDA_DURACAO_HOLD_MIN:-3}
+      # A migration cria o usuário das sessões do ADK com esta senha.
+      ADK_SESSOES_SENHA: ${ADK_SESSOES_SENHA:-adk_sessoes}
     ports:
       # Até a T5.1 a API confia nos headers sem autenticar: só na própria máquina.
       - "127.0.0.1:${API_PORT:-8000}:8000"
@@ -205,6 +207,9 @@ services:
       GOOGLE_API_KEY: ${GOOGLE_API_KEY:-}
       AGENTE_MODELO_VOZ: ${AGENTE_MODELO_VOZ:-gemini-3.1-flash-live-preview}
       AGENTE_API_URL: http://api:8000
+      ADK_SESSOES_HOST: postgres
+      ADK_SESSOES_DB: ${POSTGRES_DB:-clinica}
+      ADK_SESSOES_SENHA: ${ADK_SESSOES_SENHA:-adk_sessoes}
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_USER: ${RABBITMQ_USER:-clinica}
       RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:-clinica}

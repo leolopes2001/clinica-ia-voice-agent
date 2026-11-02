@@ -6,6 +6,9 @@ import pytest
 
 RAIZ = Path(__file__).resolve().parent.parent
 SERVICOS_SEM_BANCO = ["agent", "mcp_clinica"]
+# O DatabaseSessionService do ADK precisa do driver (T3.3), com um usuário que só vê as próprias
+# tabelas: ver tests/test_sessoes_adk.py. O código do agente continua sem importar banco.
+DRIVER_PERMITIDO = {"agent": ("asyncpg",)}
 PROIBIDOS = ("clinica_core.db", "clinica_core.modelos", "sqlalchemy", "asyncpg")
 
 
@@ -54,6 +57,8 @@ def test_servico_nao_importa_banco(servico: str) -> None:
 def test_servico_nao_declara_dependencia_de_banco(servico: str) -> None:
     projeto = tomllib.loads((RAIZ / "services" / servico / "pyproject.toml").read_text())
     for dependencia in projeto["project"]["dependencies"]:
+        if dependencia in DRIVER_PERMITIDO.get(servico, ()):
+            continue
         assert not dependencia.startswith(("sqlalchemy", "asyncpg")), dependencia
         if dependencia.startswith("clinica-core["):
             assert "db" not in dependencia.split("[")[1], dependencia
