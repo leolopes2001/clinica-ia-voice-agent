@@ -52,7 +52,8 @@ O paciente liga para o número da clínica e resolve tudo por voz, sem esperar a
 **H1 — Atender a ligação.** Como paciente, quero ligar e ser atendido na hora.
 
 - [ ] O agente atende em até 2 toques e se apresenta com o nome da clínica.
-- [ ] Se o telefone já estiver cadastrado, o agente cumprimenta pelo primeiro nome.
+- [ ] Se o telefone tiver um único paciente cadastrado, o agente cumprimenta pelo primeiro nome.
+- [ ] Se o telefone tiver mais de um paciente (por exemplo, pais que marcam para os filhos), o agente cumprimenta sem citar nomes e pergunta para quem é a consulta.
 - [ ] Latência entre o fim da fala do paciente e o início da resposta: mediana ≤ 1,5 s.
 - [ ] O paciente pode interromper o agente a qualquer momento (barge-in).
 
@@ -69,6 +70,7 @@ O paciente liga para o número da clínica e resolve tudo por voz, sem esperar a
 - [ ] O horário escolhido fica **segurado** por 3 minutos enquanto o paciente confirma.
 - [ ] Antes de gravar, o agente repete tudo e espera um "sim" explícito.
 - [ ] Paciente novo: o agente coleta nome completo e data de nascimento. O telefone vem da ligação.
+- [ ] Um mesmo telefone pode ter vários pacientes. Se a consulta for para alguém ainda não cadastrado nesse telefone, o agente faz o cadastro como paciente novo. A mesma pessoa (nome normalizado e data de nascimento) não é cadastrada duas vezes no mesmo telefone.
 
 **H4 — Conflito de horário.** Como clínica, quero que duas pessoas nunca fiquem com o mesmo horário.
 
@@ -79,8 +81,9 @@ O paciente liga para o número da clínica e resolve tudo por voz, sem esperar a
 
 **H5 — Remarcar.** Como paciente, quero mudar o horário de uma consulta.
 
-- [ ] O agente identifica o paciente pelo telefone e confirma nome e data de nascimento.
-- [ ] O agente lista as consultas futuras e pergunta qual remarcar.
+- [ ] O agente identifica os pacientes pelo telefone. Se houver mais de um, pergunta de qual paciente é a consulta.
+- [ ] O agente confirma nome e data de nascimento. A verificação vale só para o paciente escolhido, e a chamada registra qual foi.
+- [ ] O agente lista as consultas futuras do paciente escolhido e pergunta qual remarcar.
 - [ ] O horário antigo só é liberado depois que o novo estiver confirmado (operação atômica).
 
 **H6 — Cancelar.** Como paciente, quero cancelar uma consulta.
@@ -184,7 +187,7 @@ CREATE EXTENSION IF NOT EXISTS btree_gist;
 
 CREATE TABLE agendamentos (
   id              uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  clinica_id      uuid NOT NULL,
+  clinica_id      uuid NOT NULL REFERENCES clinicas(id),
   dentista_id     uuid NOT NULL REFERENCES dentistas(id),
   consultorio_id  uuid NOT NULL REFERENCES consultorios(id),
   paciente_id     uuid REFERENCES pacientes(id),  -- nulo enquanto segurado
@@ -193,10 +196,13 @@ CREATE TABLE agendamentos (
   status          text NOT NULL CHECK (status IN
                   ('segurado','confirmado','cancelado','expirado','faltou','concluido')),
   expira_em       timestamptz,                     -- só para 'segurado'
-  chamada_id      uuid,                            -- quem segurou
+  chamada_id      uuid REFERENCES chamadas(id),    -- quem segurou
   origem          text NOT NULL CHECK (origem IN ('voz','painel')),
+  motivo_cancelamento text,
   criado_em       timestamptz NOT NULL DEFAULT now(),
 
+  CONSTRAINT segurado_exige_expiracao CHECK (status <> 'segurado' OR expira_em IS NOT NULL),
+  CONSTRAINT confirmado_exige_paciente CHECK (status <> 'confirmado' OR paciente_id IS NOT NULL),
   CONSTRAINT sem_conflito_dentista EXCLUDE USING gist
     (dentista_id WITH =, periodo WITH &&)
     WHERE (status IN ('segurado','confirmado')),
@@ -231,6 +237,8 @@ Paciente A   Agente A        API + Postgres        Agente B   Paciente B
 
 ### Modelo de dados
 
+Todas as tabelas, exceto `clinicas` e `idempotencia`, têm `clinica_id` com FK para `clinicas`.
+
 | Tabela | Campos principais | Observação |
 | --- | --- | --- |
 | `clinicas` | nome, telefone, endereco, fuso, politica_cancelamento_horas | 1 linha no MVP |
@@ -239,32 +247,36 @@ Paciente A   Agente A        API + Postgres        Agente B   Paciente B
 | `procedimentos` | nome, sinonimos[], duracao_min, intervalo_limpeza_min, dentistas_habilitados[] | `sinonimos` ajuda o agente a reconhecer "limpeza" = "profilaxia" |
 | `grade_trabalho` | dentista_id, dia_semana, inicio, fim, consultorio_id | Grade semanal recorrente |
 | `bloqueios` | dentista_id (nulo = clínica toda), periodo, motivo | Férias, feriados, almoço |
-| `pacientes` | nome, telefone_e164 (único), data_nascimento, consentimento_em | |
+| `pacientes` | nome, nome_normalizado, telefone_e164, data_nascimento, consentimento_em | Um telefone pode ter vários pacientes. Índice em (clinica_id, telefone_e164) e unicidade em (clinica_id, telefone_e164, nome_normalizado, data_nascimento). `nome_normalizado` é gerado no banco: sem acentos, em minúsculas e com espaços compactados |
 | `agendamentos` | (ver SQL acima) | |
-| `chamadas` | telefone, sala, inicio, fim, desfecho, transcricao, apagar_em | |
+| `chamadas` | telefone, sala, inicio, fim, desfecho, transcricao, apagar_em, paciente_id, identidade_verificada_em, tentativas_identidade | `paciente_id` é o paciente escolhido na chamada. Trocar de paciente desfaz a verificação, mas não zera as tentativas |
+| `pedidos_retorno` | protocolo (único), chamada_id, telefone, motivo, status, criado_em | Pedidos de retorno da H7 |
 | `conhecimento_documentos` | titulo, arquivo, status, ativo | |
-| `conhecimento_trechos` | documento_id, ordem, texto, embedding `vector(768)`, tsv `tsvector` | Índice HNSW + GIN |
+| `conhecimento_trechos` | documento_id, ordem, texto, embedding `vector(768)`, tsv `tsvector` | Índice HNSW + GIN. `tsv` é gerado no banco a partir de `texto` |
 | `idempotencia` | chave, resposta_json, criado_em | Limpeza após 24 h |
 | `usuarios` / `auditoria` | email, senha_hash, perfil / usuario_id, acao, entidade, antes, depois | |
+
+As configurações do agente (T5.6) ganham tabela numa migration própria, nessa tarefa.
 
 Horários livres são calculados, não armazenados: grade de trabalho, menos bloqueios, menos agendamentos ativos, fatiado pela duração do procedimento mais o intervalo de limpeza.
 
 ### Contratos MCP
 
-Nenhuma ferramenta recebe telefone, `paciente_id` da sessão ou `clinica_id` como parâmetro. O servidor resolve tudo pelo header `X-Chamada-Id`.
+Nenhuma ferramenta recebe telefone, `paciente_id` da sessão ou `clinica_id` como parâmetro. O servidor resolve tudo pelo header `X-Chamada-Id`. A única exceção é `selecionar_paciente`, que recebe um id da lista devolvida por `identificar_chamador`: o servidor recusa qualquer id que não pertença ao telefone da chamada.
 
 **`mcp-clinica`** (escrita, chama a API):
 
 | Ferramenta | Entrada | Saída |
 | --- | --- | --- |
-| `identificar_chamador` | — | paciente cadastrado ou `null` |
-| `cadastrar_paciente` | nome, data_nascimento | paciente |
-| `verificar_identidade` | data_nascimento | `ok` true/false (3 tentativas por chamada) |
+| `identificar_chamador` | — | lista de pacientes do telefone `{paciente_id, primeiro_nome}`, vazia se não houver. Com um único paciente, ele já fica selecionado na chamada |
+| `selecionar_paciente` | paciente_id | paciente selecionado na chamada. Desfaz qualquer verificação anterior |
+| `cadastrar_paciente` | nome, data_nascimento | paciente, que fica selecionado na chamada |
+| `verificar_identidade` | data_nascimento | `ok` true/false para o paciente selecionado (3 tentativas por chamada) |
 | `listar_procedimentos` | — | nome, duração, sinônimos |
 | `listar_horarios_livres` | procedimento, a_partir_de, ate, dentista?, turno? | até 3 opções com texto falado pronto |
 | `segurar_horario` | procedimento, dentista, inicio | `hold_id` + `expira_em`, ou `ocupado` + alternativas |
 | `confirmar_agendamento` | hold_id | agendamento confirmado ou `hold_perdido` |
-| `listar_meus_agendamentos` | — | consultas futuras (exige identidade verificada) |
+| `listar_meus_agendamentos` | — | consultas futuras do paciente selecionado (exige identidade verificada) |
 | `remarcar_agendamento` | agendamento_id, hold_id | agendamento novo |
 | `cancelar_agendamento` | agendamento_id, motivo? | ok + aviso de política |
 | `registrar_pedido_retorno` | motivo | protocolo |
@@ -353,16 +365,16 @@ São 7 fases, cada uma terminando em algo que roda e pode ser testado. As fases 
 
 **Fase 1 — Agenda e concorrência (o núcleo)**
 
-- [ ] T1.1 Migrations Alembic de todas as tabelas, com `btree_gist`, `pgvector` e as duas exclusion constraints.
+- [x] T1.1 Migrations Alembic de todas as tabelas, com `btree_gist`, `pgvector`, `unaccent` e as duas exclusion constraints.
 - [ ] T1.2 Cálculo de horários livres (grade − bloqueios − agendamentos), com testes de borda: almoço, feriado, procedimento que não cabe no fim do turno.
-- [ ] T1.3 Endpoints segurar, confirmar, remarcar e cancelar, com idempotência e tradução do erro `23P01`.
-- [ ] T1.4 Fila de atraso + DLX para expiração de holds, e o consumidor no worker.
+- [ ] T1.3 Endpoints segurar, confirmar, remarcar e cancelar, com idempotência e tradução do erro `23P01`. *A resolver:* a regra de confirmar exige `chamada_id=:chamada`, mas um hold criado no painel tem `chamada_id` nulo, e essa condição nunca é verdadeira nesse caso.
+- [ ] T1.4 Fila de atraso + DLX para expiração de holds, e o consumidor no worker. Trocar o TTL da fila `holds.atraso` por expiração por mensagem (`expiration`), com a duração vinda das settings: como todos os holds têm a mesma duração, a ordem FIFO garante que expirem na ordem certa, e a duração muda sem recriar a fila. Ao concluir, atualizar a seção RabbitMQ e a regra de expirar.
 - [ ] T1.5 **Teste de concorrência:** 50 tarefas `asyncio` tentando o mesmo horário. *Pronto quando:* exatamente 1 sucesso e 49 respostas `ocupado`, em 100 execuções seguidas.
 - [ ] T1.6 Publicação dos eventos `agendamento.*`.
 
 **Fase 2 — Servidores MCP e RAG**
 
-- [ ] T2.1 `mcp-clinica` com as 11 ferramentas, resolvendo identidade pelo `X-Chamada-Id`.
+- [ ] T2.1 `mcp-clinica` com as 12 ferramentas, resolvendo identidade pelo `X-Chamada-Id`.
 - [ ] T2.2 Pipeline de ingestão no worker (extração, chunking, embeddings, gravação).
 - [ ] T2.3 `mcp-conhecimento` com busca híbrida e RRF.
 - [ ] T2.4 Conjunto de 30 perguntas de avaliação. *Pronto quando:* o trecho certo aparece no top 3 em ≥ 90% delas.
