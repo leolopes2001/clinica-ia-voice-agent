@@ -37,8 +37,10 @@ Se algo no código conflitar com a spec, a spec vence. Se a spec estiver errada 
 
 ## Como trabalhar
 
-- Faça **uma tarefa por vez** (ex.: "T1.3"), na ordem das fases. Não pule fases.
-- Antes de codar, apresente um plano curto da tarefa e espere aprovação.
+- Trabalhe **por fase**, na ordem das fases, sem pular nenhuma. Execute todas as tarefas da fase em sequência, sem apresentar plano antes de cada uma.
+- Só pare no meio da fase se uma decisão mudar o comportamento que o paciente ou a clínica percebem: o que o agente fala, regras da agenda, dados guardados ou segurança.
+- Detalhes técnicos: decida sozinho, com a opção mais conservadora, e registre na seção "Decisões tomadas pelo agente", no fim de `docs/spec.md`.
+- Ao terminar a fase, pare e entregue um resumo: o que foi feito, as decisões tomadas e o que o usuário precisa testar ou providenciar.
 - Escreva os testes junto com o código. A tarefa só termina quando os testes passam e o critério "Pronto quando" da spec é atendido.
 - Cada tarefa tem a sua branch, criada a partir da `main` (ex.: `t1.3-endpoints-agenda`).
 - Ao terminar, marque o checkbox da tarefa em `docs/spec.md` (`- [ ]` → `- [x]`) e faça um commit com a mensagem `T1.3: <resumo>`.
