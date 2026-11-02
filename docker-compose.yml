@@ -137,6 +137,36 @@ services:
       retries: 10
       start_period: 15s
 
+  mcp-conhecimento:
+    build:
+      context: .
+      dockerfile: services/mcp_conhecimento/Dockerfile
+    restart: unless-stopped
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_USER: ${POSTGRES_USER:-clinica}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-clinica}
+      POSTGRES_DB: ${POSTGRES_DB:-clinica}
+      GOOGLE_API_KEY: ${GOOGLE_API_KEY:-}
+      EMBEDDING_MODELO: ${EMBEDDING_MODELO:-gemini-embedding-001}
+    # Sem portas no host: o MCP fica só na rede interna do Docker.
+    depends_on:
+      # As tabelas vêm das migrations, aplicadas pela API ao subir.
+      api:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - import urllib.request; urllib.request.urlopen('http://localhost:8000/saude')
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+
 volumes:
   postgres_data:
   rabbitmq_data:

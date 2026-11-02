@@ -12,7 +12,7 @@ IMAGENS = {
     "rabbitmq": "rabbitmq:3-management",
     "redis": "redis:7",
 }
-CONSTRUIDOS = ["api", "worker", "mcp-clinica"]
+CONSTRUIDOS = ["api", "worker", "mcp-clinica", "mcp-conhecimento"]
 DOCKERFILES = {servico: servico.replace("-", "_") for servico in CONSTRUIDOS}
 PORTAS = {
     "postgres": {("127.0.0.1", "5432")},
@@ -84,6 +84,13 @@ def test_mcp_clinica_so_na_rede_interna(configuracao: dict[str, Any]) -> None:
     assert "ports" not in configuracao["mcp-clinica"]
     assert configuracao["mcp-clinica"]["environment"]["MCP_CLINICA_API_URL"] == "http://api:8000"
     assert configuracao["mcp-clinica"]["depends_on"]["api"]["condition"] == "service_healthy"
+
+
+def test_mcp_conhecimento_so_na_rede_interna(configuracao: dict[str, Any]) -> None:
+    servico = configuracao["mcp-conhecimento"]
+    assert "ports" not in servico
+    assert "GOOGLE_API_KEY" in servico["environment"]
+    assert servico["depends_on"]["postgres"]["condition"] == "service_healthy"
 
 
 def test_worker_recebe_a_chave_e_o_volume_da_base(configuracao: dict[str, Any]) -> None:
