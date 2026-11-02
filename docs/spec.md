@@ -372,7 +372,7 @@ São 7 fases, cada uma terminando em algo que roda e pode ser testado. As fases 
 - [x] T1.1 Migrations Alembic de todas as tabelas, com `btree_gist`, `pgvector`, `unaccent` e as duas exclusion constraints.
 - [x] T1.2 Cálculo de horários livres (grade − bloqueios − agendamentos), com testes de borda: almoço, feriado, procedimento que não cabe no fim do turno.
 - [x] T1.3 Endpoints segurar, confirmar, remarcar e cancelar, com idempotência e tradução do erro `23P01`, a rota HTTP de listar horários livres e o serviço `api` no Compose.
-- [ ] T1.4 Fila de atraso + DLX para expiração de holds, e o consumidor no worker. Trocar o TTL da fila `holds.atraso` por expiração por mensagem (`expiration`), com a duração vinda das settings (`AGENDA_DURACAO_HOLD_MIN`): como todos os holds têm a mesma duração, a ordem FIFO garante que expirem na ordem certa, e a duração muda sem recriar a fila. Ao concluir, atualizar a seção RabbitMQ e a regra de expirar.
+- [ ] T1.4 Fila de atraso + DLX para expiração de holds, e o consumidor no worker. Trocar o TTL da fila `holds.atraso` por expiração por mensagem (`expiration`), com a duração vinda das settings (`AGENDA_DURACAO_HOLD_MIN`): como todos os holds têm a mesma duração, a ordem FIFO garante que expirem na ordem certa, e a duração muda sem recriar a fila. Ao concluir, atualizar a seção RabbitMQ e a regra de expirar. Incluir uma migration com um CHECK em `agendamentos`: `origem='voz'` exige `chamada_id`.
 - [ ] T1.5 **Teste de concorrência:** 50 tarefas `asyncio` tentando o mesmo horário. *Pronto quando:* exatamente 1 sucesso e 49 respostas `ocupado`, em 100 execuções seguidas.
 - [ ] T1.6 Publicação dos eventos `agendamento.*`.
 

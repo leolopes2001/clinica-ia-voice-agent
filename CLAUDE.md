@@ -43,6 +43,7 @@ Se algo no código conflitar com a spec, a spec vence. Se a spec estiver errada 
 - Cada tarefa tem a sua branch, criada a partir da `main` (ex.: `t1.3-endpoints-agenda`).
 - Ao terminar, marque o checkbox da tarefa em `docs/spec.md` (`- [ ]` → `- [x]`) e faça um commit com a mensagem `T1.3: <resumo>`.
 - Quando os testes passarem e o critério "Pronto quando" for atendido, faça o merge da branch na `main` sem pedir confirmação.
+- A `main` é a branch principal. Depois de cada merge nela, faça o push para a `origin/main` sem pedir confirmação.
 - APIs de bibliotecas que mudam rápido (ADK, LiveKit, MCP): consulte a documentação atual antes de usar. Não confie na memória.
   - LiveKit: use o MCP `livekit-docs`, se estiver configurado.
   - ADK: https://adk.dev
