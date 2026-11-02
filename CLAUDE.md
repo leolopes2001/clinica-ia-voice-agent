@@ -10,7 +10,7 @@ A clínica administra tudo por um painel web. Tudo roda localmente com `docker c
 
 A especificação completa está em `docs/spec.md`. **Leia antes de qualquer tarefa.**
 Ela contém, nesta ordem: Constituição → Especificação (histórias H1–H11 com critérios de aceitação)
-→ Plano técnico → Tarefas (T0.1 … T6.4) → Decisões em aberto.
+→ Plano técnico → Tarefas (T0.1 … T6.5) → Decisões em aberto.
 
 Se algo no código conflitar com a spec, a spec vence. Se a spec estiver errada ou incompleta,
 **pare e pergunte** antes de mudar o comportamento. Não invente requisitos.

@@ -306,11 +306,11 @@ O painel é servido pelo FastAPI com templates Jinja2 e HTMX, e recebe atualiza�
 | Serviço | Imagem / build | Portas expostas no host | Depende de |
 | --- | --- | --- | --- |
 | `postgres` | `pgvector/pgvector:pg16` | 5432 (só dev) | — |
-| `rabbitmq` | `rabbitmq:3-management` | 15672 (UI) | — |
+| `rabbitmq` | `rabbitmq:3-management` | 15672 (UI), 5672 (só dev) | — |
 | `redis` | `redis:7` | — | — |
 | `livekit` | `livekit/livekit-server` | 7880, 7881/tcp, faixa UDP de RTC | redis |
 | `livekit-sip` | `livekit/sip` | 5060/udp, 10000–20000/udp (só na LAN) | livekit, redis |
-| `api` | build `./services/api` | 8000 | postgres, rabbitmq |
+| `api` | build `./services/api` | `${API_PORT:-8000}` | postgres, rabbitmq |
 | `painel` | build `./services/painel` | 8080 | api, rabbitmq |
 | `mcp-clinica` | build `./services/mcp_clinica` | — (rede interna) | api |
 | `mcp-conhecimento` | build `./services/mcp_conhecimento` | — (rede interna) | postgres |
@@ -348,7 +348,7 @@ São 7 fases, cada uma terminando em algo que roda e pode ser testado. As fases 
 **Fase 0 — Fundação**
 
 - [x] T0.1 Monorepo com `uv` workspaces, `ruff`, `mypy`, `pytest`, pre-commit.
-- [ ] T0.2 `docker-compose.yml` com postgres, rabbitmq e redis, mais health checks. *Pronto quando:* `docker compose up` sobe tudo saudável.
+- [x] T0.2 `docker-compose.yml` com postgres, rabbitmq e redis, mais health checks. *Pronto quando:* `docker compose up` sobe tudo saudável.
 - [ ] T0.3 `packages/core`: settings (`pydantic-settings`), conexão async ao banco e cliente RabbitMQ com declaração de exchanges e filas.
 
 **Fase 1 — Agenda e concorrência (o núcleo)**
@@ -399,6 +399,7 @@ São 7 fases, cada uma terminando em algo que roda e pode ser testado. As fases 
 - [ ] T6.2 Backup diário do Postgres (`pg_dump` num volume e cópia externa).
 - [ ] T6.3 Logs estruturados e um painel simples de saúde (serviços, filas, chamadas ativas).
 - [ ] T6.4 Runbook: o que fazer se cair a internet, o gateway ou a API do Gemini.
+- [ ] T6.5 Trocar as senhas padrão de desenvolvimento do Compose (Postgres e RabbitMQ) antes de usar em produção.
 
 ## Decisões em aberto e riscos
 
