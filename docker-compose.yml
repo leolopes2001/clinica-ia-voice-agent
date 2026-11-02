@@ -110,6 +110,28 @@ services:
       retries: 10
       start_period: 15s
 
+  mcp-clinica:
+    build:
+      context: .
+      dockerfile: services/mcp_clinica/Dockerfile
+    restart: unless-stopped
+    environment:
+      MCP_CLINICA_API_URL: http://api:8000
+    # Sem portas no host: o MCP fica só na rede interna do Docker.
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - import urllib.request; urllib.request.urlopen('http://localhost:8000/saude')
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+
 volumes:
   postgres_data:
   rabbitmq_data:

@@ -3,7 +3,7 @@ name = "clinica-mcp-clinica"
 version = "0.1.0"
 description = "Servidor MCP de agenda, adaptador fino da API"
 requires-python = ">=3.12,<3.13"
-dependencies = []
+dependencies = ["httpx", "mcp", "pydantic-settings>=2.16.2", "uvicorn"]
 
 [build-system]
 requires = ["uv_build>=0.12.1,<0.13"]
