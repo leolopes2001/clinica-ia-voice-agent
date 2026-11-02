@@ -370,11 +370,17 @@ name = "clinica-mcp-conhecimento"
 version = "0.1.0"
 source = { editable = "services/mcp_conhecimento" }
 dependencies = [
-    { name = "clinica-core", extra = ["db"] },
+    { name = "clinica-core", extra = ["db", "embeddings"] },
+    { name = "mcp" },
+    { name = "uvicorn" },
 ]
 
 [package.metadata]
-requires-dist = [{ name = "clinica-core", extras = ["db"], editable = "packages/core" }]
+requires-dist = [
+    { name = "clinica-core", extras = ["db", "embeddings"], editable = "packages/core" },
+    { name = "mcp" },
+    { name = "uvicorn" },
+]
 
 [[package]]
 name = "clinica-painel"

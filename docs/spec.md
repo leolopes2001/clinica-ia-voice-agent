@@ -382,7 +382,7 @@ São 7 fases, cada uma terminando em algo que roda e pode ser testado. As fases 
 
 - [x] T2.1 `POST /chamadas` e os endpoints de identidade na API (identificar, selecionar, cadastrar e verificar), e `mcp-clinica` com as 12 ferramentas, resolvendo identidade pelo `X-Chamada-Id`. Em `listar_horarios_livres`, filtrar por `turno` e depois escolher as até 3 opções variadas entre os candidatos.
 - [x] T2.2 Pipeline de ingestão no worker (extração, chunking, embeddings, gravação).
-- [ ] T2.3 `mcp-conhecimento` com busca híbrida e RRF.
+- [x] T2.3 `mcp-conhecimento` com busca híbrida e RRF.
 - [ ] T2.4 Conjunto de 30 perguntas de avaliação. *Pronto quando:* o trecho certo aparece no top 3 em ≥ 90% delas.
 - [ ] T2.5 Testar os dois MCPs com o MCP Inspector e com um agente ADK em modo texto (`adk web`).
 
@@ -468,3 +468,8 @@ Decisões técnicas tomadas durante a implementação, com a opção mais conser
 | T2.2 | A indexação usa um canal próprio, com `prefetch=1`. | Um documento por vez respeita o limite de requisições do Gemini e não atrasa a expiração de holds. |
 | T2.2 | Sem `GOOGLE_API_KEY`, o worker sobe normalmente e só a indexação falha. | A expiração de holds não pode depender da chave. |
 | T2.2 | A indexação só lê arquivos. Um documento com `arquivo` nulo fica com status `erro`. | A T5.4 precisa salvar como arquivo no volume o texto editado no painel, porque a tabela não tem coluna de texto. |
+| T2.3 | A spec pede trechos de cerca de 500 tokens na indexação (até 2000 caracteres) e no máximo 800 caracteres na resposta. Quando o trecho passa de 800, a resposta mantém o título e recorta em torno das frases com mais palavras da pergunta. | Respeita os dois números sem cortar às cegas a parte que responde à pergunta. |
+| T2.3 | A busca por texto casa com qualquer palavra da pergunta (`plainto_tsquery` com `&` trocado por `\|`), e `k` fica limitado a 3. | Uma pergunta falada quase nunca tem todas as palavras no mesmo trecho, e a spec devolve só os 3 primeiros. |
+| T2.3 | Se o embedding da pergunta falhar, a busca segue só por texto, com limite de 2 s e 2 tentativas. | O paciente está na linha: é melhor responder com menos precisão do que deixá-lo esperando. |
+| T2.3 | Não há nota de corte de relevância: a busca devolve os 3 melhores, mesmo fracos. | A spec não define corte. Quem decide se o trecho responde é o agente, e o prompt da T3.2 precisa mandá-lo dizer que não sabe quando o trecho não trouxer a resposta (H2). |
+| T2.3 | O servidor abre as transações em modo somente leitura, e a clínica vem sempre de `chamadas.clinica_id`, ignorando `X-Clinica-Id`. | Garante no banco o "somente leitura" do contrato, e o LLM não influi na clínica. |
