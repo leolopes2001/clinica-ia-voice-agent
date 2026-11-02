@@ -10,6 +10,8 @@ from clinica_api.agenda import Contexto, ErroAgenda, compor_chave, transacao
 from clinica_api.esquemas import (
     CadastrarPacienteEntrada,
     ChamadaCriada,
+    ClinicaResumo,
+    Clinicas,
     CriarChamadaEntrada,
     PacienteDaChamada,
     PacientesDoTelefone,
@@ -20,7 +22,7 @@ from clinica_api.esquemas import (
     VerificarIdentidadeEntrada,
 )
 from clinica_api.travas import travar
-from clinica_core.modelos import Chamada, Paciente, PedidoRetorno
+from clinica_core.modelos import Chamada, Clinica, Paciente, PedidoRetorno
 
 MAXIMO_TENTATIVAS_IDENTIDADE = 3
 _TENTATIVAS_DE_PROTOCOLO = 5
@@ -53,6 +55,11 @@ def _trocar_paciente(chamada: Chamada, paciente_id: UUID) -> None:
     if chamada.paciente_id != paciente_id:
         chamada.paciente_id = paciente_id
         chamada.identidade_verificada_em = None
+
+
+async def listar_clinicas(sessao: AsyncSession) -> Clinicas:
+    linhas = await sessao.execute(select(Clinica.id, Clinica.nome).order_by(Clinica.nome))
+    return Clinicas(clinicas=[ClinicaResumo(clinica_id=i, nome=n) for i, n in linhas.all()])
 
 
 async def criar_chamada(

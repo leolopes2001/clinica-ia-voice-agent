@@ -811,3 +811,11 @@ async def test_pedido_de_retorno_usa_telefone_da_ligacao_e_e_idempotente(
     assert [(p.telefone, p.motivo, p.status) for p in pedidos] == [
         (telefone, "orçamento", "pendente")
     ]
+
+
+# ---- GET /clinicas
+
+
+async def test_lista_as_clinicas_para_o_agente(http_api: httpx.AsyncClient, c: Cenario) -> None:
+    corpo = (await http_api.get("/clinicas")).json()
+    assert str(c.clinica_id) in [clinica["clinica_id"] for clinica in corpo["clinicas"]]
