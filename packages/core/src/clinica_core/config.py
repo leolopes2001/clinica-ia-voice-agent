@@ -21,6 +21,24 @@ class ConfigPostgres(BaseSettings):
         return f"postgresql+asyncpg://{usuario}:{senha}@{self.host}:{self.port}/{self.db}"
 
 
+class ConfigSessoesAdk(BaseSettings):
+    """Usuário só das sessões do ADK: não enxerga as tabelas da clínica."""
+
+    model_config = SettingsConfigDict(env_prefix="ADK_SESSOES_", env_file=".env", extra="ignore")
+
+    host: str = "localhost"
+    port: int = 5432
+    usuario: str = "adk_sessoes"
+    senha: SecretStr = SecretStr("adk_sessoes")
+    db: str = "clinica"
+
+    @property
+    def url(self) -> str:
+        usuario = quote(self.usuario, safe="")
+        senha = quote(self.senha.get_secret_value(), safe="")
+        return f"postgresql+asyncpg://{usuario}:{senha}@{self.host}:{self.port}/{self.db}"
+
+
 class ConfigRabbit(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="RABBITMQ_", env_file=".env", extra="ignore")
 
