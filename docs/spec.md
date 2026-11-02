@@ -279,11 +279,11 @@ A transferência e o desligamento usam o `LiveKitToolset` do ADK, não o MCP. Os
 
 ### RabbitMQ
 
-Há um exchange `clinica.eventos` do tipo topic. Cada fila tem a sua DLQ.
+Há um exchange `clinica.eventos` do tipo topic, mais o `clinica.dlx` (direct) para dead-letters. Cada fila durável tem a sua DLQ (`<fila>.dlq`), com duas exceções: o dead-letter de `holds.atraso` é a própria `holds.expirar`, e a fila do painel não tem DLQ.
 
 | Routing key / fila | Produtor | Consumidor | Para quê |
 | --- | --- | --- | --- |
-| `agendamento.*` (criado, confirmado, remarcado, cancelado, expirado) | API | Painel (SSE) | Atualizar a agenda ao vivo |
+| `agendamento.*` (criado, confirmado, remarcado, cancelado, expirado) → fila exclusiva e auto-delete, declarada por cada processo do painel ao subir | API | Painel (SSE) | Atualizar a agenda ao vivo. Sem painel no ar, os eventos são descartados; com várias instâncias, todas recebem |
 | `holds.atraso` (TTL 180 s) → DLX → `holds.expirar` | API | Worker | Liberar holds vencidos |
 | `conhecimento.indexar` | Painel | Worker | Extrair, fatiar, gerar embeddings e gravar |
 | `chamada.encerrada` | Agente | Worker | Gravar transcrição, desfecho e métricas |
@@ -326,7 +326,7 @@ clinica-voz/
 ├── docker-compose.yml
 ├── .env.example
 ├── docs/                 # spec.md (este documento)
-├── infra/                # livekit.yaml, sip.yaml, rabbitmq definitions.json
+├── infra/                # livekit.yaml, sip.yaml
 ├── scripts/              # bootstrap_sip.sh, seed.py, teste_concorrencia.py
 ├── packages/
 │   └── core/             # modelos, schemas Pydantic, cliente RabbitMQ, config
@@ -349,7 +349,7 @@ São 7 fases, cada uma terminando em algo que roda e pode ser testado. As fases 
 
 - [x] T0.1 Monorepo com `uv` workspaces, `ruff`, `mypy`, `pytest`, pre-commit.
 - [x] T0.2 `docker-compose.yml` com postgres, rabbitmq e redis, mais health checks. *Pronto quando:* `docker compose up` sobe tudo saudável.
-- [ ] T0.3 `packages/core`: settings (`pydantic-settings`), conexão async ao banco e cliente RabbitMQ com declaração de exchanges e filas.
+- [x] T0.3 `packages/core`: settings (`pydantic-settings`), conexão async ao banco e cliente RabbitMQ com declaração de exchanges e filas.
 
 **Fase 1 — Agenda e concorrência (o núcleo)**
 
@@ -372,7 +372,7 @@ São 7 fases, cada uma terminando em algo que roda e pode ser testado. As fases 
 
 - [ ] T3.1 Subir `livekit` local e o agente com `LiveKitRunner`, `McpToolset` x2 e `LiveKitToolset`.
 - [ ] T3.2 Prompt do sistema em `agent/prompts/`: persona, consentimento, regra de confirmação, limites clínicos, como falar datas e horários.
-- [ ] T3.3 `DatabaseSessionService` no Postgres.
+- [ ] T3.3 `DatabaseSessionService` no Postgres, com usuário e schema próprios para as sessões do ADK.
 - [ ] T3.4 Testar pelo navegador com o LiveKit Agents Playground ou o `agent-starter-react` (só para teste interno). *Pronto quando:* agendar, remarcar e cancelar funcionam por voz.
 - [ ] T3.5 Medir latência (meta: mediana ≤ 1,5 s).
 

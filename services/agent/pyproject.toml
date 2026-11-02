@@ -3,9 +3,11 @@ name = "clinica-agent"
 version = "0.1.0"
 description = "Agente de voz da recepcionista"
 requires-python = ">=3.12,<3.13"
-dependencies = []
+dependencies = ["clinica-core[rabbit]"]
 
 [build-system]
 requires = ["uv_build>=0.12.1,<0.13"]
 build-backend = "uv_build"
 
+[tool.uv.sources]
+clinica-core = { workspace = true }

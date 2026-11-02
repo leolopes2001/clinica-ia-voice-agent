@@ -3,7 +3,13 @@ name = "clinica-core"
 version = "0.1.0"
 description = "Código compartilhado da recepcionista de voz"
 requires-python = ">=3.12,<3.13"
-dependencies = []
+dependencies = [
+    "pydantic-settings>=2.16.2",
+]
+
+[project.optional-dependencies]
+db = ["asyncpg", "sqlalchemy[asyncio]"]
+rabbit = ["aio-pika"]
 
 [build-system]
 requires = ["uv_build>=0.12.1,<0.13"]
