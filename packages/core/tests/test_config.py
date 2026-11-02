@@ -1,14 +1,16 @@
 from pathlib import Path
 
 import pytest
+from pydantic import ValidationError
 
-from clinica_core.config import ConfigPostgres, ConfigRabbit
+from clinica_core.config import ConfigAgenda, ConfigPostgres, ConfigRabbit
 
 VARIAVEIS = [
     f"{prefixo}_{nome}"
     for prefixo, nomes in {
         "POSTGRES": ("HOST", "PORT", "USER", "PASSWORD", "DB"),
         "RABBITMQ": ("HOST", "PORT", "USER", "PASSWORD", "VHOST"),
+        "AGENDA": ("ANTECEDENCIA_MINIMA_MIN",),
     }.items()
     for nome in nomes
 ]
@@ -52,3 +54,18 @@ def test_senha_nao_aparece_no_repr(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("RABBITMQ_PASSWORD", "segredo")
     assert "segredo" not in repr(ConfigPostgres())
     assert "segredo" not in repr(ConfigRabbit())
+
+
+def test_antecedencia_minima_padrao_e_de_120_minutos() -> None:
+    assert ConfigAgenda().antecedencia_minima_min == 120
+
+
+def test_antecedencia_minima_vem_do_ambiente(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("AGENDA_ANTECEDENCIA_MINIMA_MIN", "30")
+    assert ConfigAgenda().antecedencia_minima_min == 30
+
+
+def test_antecedencia_minima_negativa_e_recusada(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("AGENDA_ANTECEDENCIA_MINIMA_MIN", "-1")
+    with pytest.raises(ValidationError):
+        ConfigAgenda()

@@ -214,7 +214,7 @@ CREATE TABLE agendamentos (
 
 Regras de cada operação:
 
-- **Segurar:** numa transação, primeiro marca como `expirado` os holds vencidos daquele dentista (`status='segurado' AND expira_em < now()`), depois insere com `status='segurado'` e `expira_em = now() + 3 min`. Erro `23P01` (exclusion violation) vira a resposta `{ok: false, motivo: "ocupado", alternativas: [...]}`.
+- **Segurar:** numa transação, primeiro marca como `expirado` os holds vencidos daquele dentista ou daquele consultório (`status='segurado' AND expira_em < now()`), porque os dois entram nas exclusion constraints, depois insere com `status='segurado'` e `expira_em = now() + 3 min`. Erro `23P01` (exclusion violation) vira a resposta `{ok: false, motivo: "ocupado", alternativas: [...]}`.
 - **Expirar:** cada hold publica uma mensagem com TTL de 180 s numa fila de atraso. Quando ela vence, cai via dead-letter na fila `holds.expirar`, e o worker marca `expirado` se o hold ainda estiver segurado. A limpeza do passo anterior cobre o caso de o worker atrasar.
 - **Confirmar:** `UPDATE ... SET status='confirmado', paciente_id=... WHERE id=:hold AND status='segurado' AND expira_em > now() AND chamada_id=:chamada`. Se nenhuma linha mudar, o hold foi perdido e o agente oferece novas opções.
 - **Remarcar:** o novo horário já está segurado. Numa única transação, confirma o novo e cancela o antigo.
@@ -244,7 +244,7 @@ Todas as tabelas, exceto `clinicas` e `idempotencia`, têm `clinica_id` com FK p
 | `clinicas` | nome, telefone, endereco, fuso, politica_cancelamento_horas | 1 linha no MVP |
 | `dentistas` | nome, especialidades[], ativo | |
 | `consultorios` | nome, ativo | Recurso físico com restrição própria |
-| `procedimentos` | nome, sinonimos[], duracao_min, intervalo_limpeza_min, dentistas_habilitados[] | `sinonimos` ajuda o agente a reconhecer "limpeza" = "profilaxia" |
+| `procedimentos` | nome, sinonimos[], duracao_min, intervalo_limpeza_min, dentistas_habilitados[] | `sinonimos` ajuda o agente a reconhecer "limpeza" = "profilaxia". `dentistas_habilitados` vazio significa que ninguém está habilitado |
 | `grade_trabalho` | dentista_id, dia_semana, inicio, fim, consultorio_id | Grade semanal recorrente |
 | `bloqueios` | dentista_id (nulo = clínica toda), periodo, motivo | Férias, feriados, almoço |
 | `pacientes` | nome, nome_normalizado, telefone_e164, data_nascimento, consentimento_em | Um telefone pode ter vários pacientes. Índice em (clinica_id, telefone_e164) e unicidade em (clinica_id, telefone_e164, nome_normalizado, data_nascimento). `nome_normalizado` é gerado no banco: sem acentos, em minúsculas e com espaços compactados |
@@ -258,7 +258,7 @@ Todas as tabelas, exceto `clinicas` e `idempotencia`, têm `clinica_id` com FK p
 
 As configurações do agente (T5.6) ganham tabela numa migration própria, nessa tarefa.
 
-Horários livres são calculados, não armazenados: grade de trabalho, menos bloqueios, menos agendamentos ativos, fatiado pela duração do procedimento mais o intervalo de limpeza.
+Horários livres são calculados, não armazenados: grade de trabalho, menos bloqueios, menos agendamentos ativos do dentista ou do consultório. Um hold vencido não ocupa o horário, mesmo antes de o worker marcá-lo como `expirado`. Os candidatos começam sempre em múltiplos de 15 minutos (:00, :15, :30, :45, no fuso da clínica) dentro de cada intervalo livre, e só entram se a duração mais o intervalo de limpeza couberem inteiros. O cálculo descarta os horários que começam antes de agora + `antecedencia_minima_min` (padrão: 120 minutos) e devolve todos os candidatos, em ordem cronológica.
 
 ### Contratos MCP
 
@@ -273,7 +273,7 @@ Nenhuma ferramenta recebe telefone, `paciente_id` da sessão ou `clinica_id` com
 | `cadastrar_paciente` | nome, data_nascimento | paciente, que fica selecionado na chamada |
 | `verificar_identidade` | data_nascimento | `ok` true/false para o paciente selecionado (3 tentativas por chamada) |
 | `listar_procedimentos` | — | nome, duração, sinônimos |
-| `listar_horarios_livres` | procedimento, a_partir_de, ate, dentista?, turno? | até 3 opções com texto falado pronto |
+| `listar_horarios_livres` | procedimento, a_partir_de, ate, dentista?, turno? | até 3 opções variadas com texto falado pronto |
 | `segurar_horario` | procedimento, dentista, inicio | `hold_id` + `expira_em`, ou `ocupado` + alternativas |
 | `confirmar_agendamento` | hold_id | agendamento confirmado ou `hold_perdido` |
 | `listar_meus_agendamentos` | — | consultas futuras do paciente selecionado (exige identidade verificada) |
@@ -286,6 +286,8 @@ Nenhuma ferramenta recebe telefone, `paciente_id` da sessão ou `clinica_id` com
 | Ferramenta | Entrada | Saída |
 | --- | --- | --- |
 | `buscar_conhecimento` | pergunta, k = 3 | trechos `{texto, fonte}`, cada um com até 800 caracteres |
+
+O `turno` vale pelo horário de início da consulta, no fuso da clínica: manhã antes das 12h, tarde das 12h às 18h, noite depois das 18h.
 
 A transferência e o desligamento usam o `LiveKitToolset` do ADK, não o MCP. Os headers por chamada usam o mecanismo de headers dinâmicos do `McpToolset`. Se a versão do ADK não tiver, a alternativa é um wrapper de ferramenta que adiciona o `chamada_id`.
 
@@ -311,7 +313,7 @@ O Redis continua no Compose só porque o LiveKit exige. O broker da aplicação 
 
 ### Painel administrativo
 
-O painel é servido pelo FastAPI com templates Jinja2 e HTMX, e recebe atualizações ao vivo por SSE (alimentado pela fila de eventos). As páginas são: Agenda (dia/semana por dentista), Pacientes, Dentistas e grade, Procedimentos, Consultórios, Bloqueios, Base de conhecimento, Chamadas, Usuários e Configurações do agente (saudação, voz, horário comercial, número de transferência). O login usa sessão com cookie seguro, e toda escrita gera um registro de auditoria.
+O painel é servido pelo FastAPI com templates Jinja2 e HTMX, e recebe atualizações ao vivo por SSE (alimentado pela fila de eventos). As páginas são: Agenda (dia/semana por dentista), Pacientes, Dentistas e grade, Procedimentos, Consultórios, Bloqueios, Base de conhecimento, Chamadas, Usuários e Configurações do agente (saudação, voz, horário comercial, número de transferência, antecedência mínima). O login usa sessão com cookie seguro, e toda escrita gera um registro de auditoria.
 
 ### Docker Compose (local)
 
@@ -366,15 +368,15 @@ São 7 fases, cada uma terminando em algo que roda e pode ser testado. As fases 
 **Fase 1 — Agenda e concorrência (o núcleo)**
 
 - [x] T1.1 Migrations Alembic de todas as tabelas, com `btree_gist`, `pgvector`, `unaccent` e as duas exclusion constraints.
-- [ ] T1.2 Cálculo de horários livres (grade − bloqueios − agendamentos), com testes de borda: almoço, feriado, procedimento que não cabe no fim do turno.
-- [ ] T1.3 Endpoints segurar, confirmar, remarcar e cancelar, com idempotência e tradução do erro `23P01`. *A resolver:* a regra de confirmar exige `chamada_id=:chamada`, mas um hold criado no painel tem `chamada_id` nulo, e essa condição nunca é verdadeira nesse caso.
+- [x] T1.2 Cálculo de horários livres (grade − bloqueios − agendamentos), com testes de borda: almoço, feriado, procedimento que não cabe no fim do turno.
+- [ ] T1.3 Endpoints segurar, confirmar, remarcar e cancelar, com idempotência e tradução do erro `23P01`, e a rota HTTP de listar horários livres. *A resolver:* a regra de confirmar exige `chamada_id=:chamada`, mas um hold criado no painel tem `chamada_id` nulo, e essa condição nunca é verdadeira nesse caso.
 - [ ] T1.4 Fila de atraso + DLX para expiração de holds, e o consumidor no worker. Trocar o TTL da fila `holds.atraso` por expiração por mensagem (`expiration`), com a duração vinda das settings: como todos os holds têm a mesma duração, a ordem FIFO garante que expirem na ordem certa, e a duração muda sem recriar a fila. Ao concluir, atualizar a seção RabbitMQ e a regra de expirar.
 - [ ] T1.5 **Teste de concorrência:** 50 tarefas `asyncio` tentando o mesmo horário. *Pronto quando:* exatamente 1 sucesso e 49 respostas `ocupado`, em 100 execuções seguidas.
 - [ ] T1.6 Publicação dos eventos `agendamento.*`.
 
 **Fase 2 — Servidores MCP e RAG**
 
-- [ ] T2.1 `mcp-clinica` com as 12 ferramentas, resolvendo identidade pelo `X-Chamada-Id`.
+- [ ] T2.1 `mcp-clinica` com as 12 ferramentas, resolvendo identidade pelo `X-Chamada-Id`. Em `listar_horarios_livres`, filtrar por `turno` e depois escolher as até 3 opções variadas entre os candidatos.
 - [ ] T2.2 Pipeline de ingestão no worker (extração, chunking, embeddings, gravação).
 - [ ] T2.3 `mcp-conhecimento` com busca híbrida e RRF.
 - [ ] T2.4 Conjunto de 30 perguntas de avaliação. *Pronto quando:* o trecho certo aparece no top 3 em ≥ 90% delas.
@@ -400,10 +402,10 @@ São 7 fases, cada uma terminando em algo que roda e pode ser testado. As fases 
 
 - [ ] T5.1 Login, perfis e auditoria.
 - [ ] T5.2 Agenda dia/semana com SSE ao vivo, e criar/remarcar/cancelar manual.
-- [ ] T5.3 Cadastros: dentistas, grade, bloqueios, procedimentos, consultórios.
+- [ ] T5.3 Cadastros: dentistas, grade, bloqueios, procedimentos, consultórios. O painel avisa quando um procedimento está sem dentista habilitado.
 - [ ] T5.4 Base de conhecimento: upload, status de indexação e tela "testar pergunta".
 - [ ] T5.5 Chamadas: lista, transcrição e desfecho.
-- [ ] T5.6 Configurações do agente.
+- [ ] T5.6 Configurações do agente, incluindo `antecedencia_minima_min`, que até lá vem das settings (`AGENDA_ANTECEDENCIA_MINIMA_MIN`).
 
 **Fase 6 — Produção local e LGPD**
 

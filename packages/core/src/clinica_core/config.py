@@ -1,6 +1,6 @@
 from urllib.parse import quote
 
-from pydantic import SecretStr
+from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -35,3 +35,9 @@ class ConfigRabbit(BaseSettings):
         senha = quote(self.password.get_secret_value(), safe="")
         vhost = quote(self.vhost, safe="")
         return f"amqp://{usuario}:{senha}@{self.host}:{self.port}/{vhost}"
+
+
+class ConfigAgenda(BaseSettings):
+    model_config = SettingsConfigDict(env_prefix="AGENDA_", env_file=".env", extra="ignore")
+
+    antecedencia_minima_min: int = Field(default=120, ge=0)
