@@ -2,6 +2,8 @@
 
     uv run python scripts/conversa_voz.py --telefone +5511900000001 "Sim, pode." "Quanto custa..."
 
+Com --interromper-apos N, fala por cima da abertura depois de N segundos (barge-in).
+
 A latência vai do fim da fala do paciente até o primeiro som do agente. Turnos que chamam
 ferramentas ficam mais lentos, e isso também é tempo de espera real na ligação.
 """
@@ -37,6 +39,11 @@ class Estado:
     fim_da_fala: float | None = None
     duracao_da_resposta: float = 0.0
     latencias: list[float] = field(default_factory=list)
+    com_ferramenta: list[float] = field(default_factory=list)
+    sem_ferramenta: list[float] = field(default_factory=list)
+    chamou_ferramenta: bool = False
+    pedidas: dict[str, float] = field(default_factory=dict)
+    duracao_por_ferramenta: dict[str, list[float]] = field(default_factory=dict)
     terminou_de_falar: asyncio.Event = field(default_factory=asyncio.Event)
     ferramentas: list[str] = field(default_factory=list)
     saiu: asyncio.Event = field(default_factory=asyncio.Event)
@@ -74,6 +81,8 @@ async def _ouvir(faixa: rtc.Track, estado: Estado) -> None:
                 estado.primeiro_som_depois_da_fala = agora
                 latencia = agora - estado.fim_da_fala
                 estado.latencias.append(latencia)
+                grupo = estado.com_ferramenta if estado.chamou_ferramenta else estado.sem_ferramenta
+                grupo.append(latencia)
                 print(f"    [latência {latencia:.2f} s]", flush=True)
 
 
@@ -109,7 +118,16 @@ async def _esperar_fim_do_turno(estado: Estado) -> None:
             return
 
 
-async def conversar(telefone: str, falas: list[str], voz: str) -> list[float]:
+def _resumo(rotulo: str, valores: list[float]) -> str:
+    if not valores:
+        return f"{rotulo}: nenhum"
+    ordenados = sorted(valores)
+    p95 = ordenados[max(0, round(0.95 * len(ordenados)) - 1)]
+    mediana = statistics.median(ordenados)
+    return f"{rotulo}: n={len(ordenados)} mediana={mediana:.2f}s p95={p95:.2f}s"
+
+
+async def conversar(telefone: str, falas: list[str], voz: str, interromper_apos: float) -> Estado:
     estado = Estado()
     config = ConfigLiveKit()
     _, token = await despachar_chamada_de_teste(config, telefone)
@@ -126,8 +144,15 @@ async def conversar(telefone: str, falas: list[str], voz: str) -> list[float]:
         mensagem = json.loads(pacote.data)
         if mensagem["type"] == "function_call":
             estado.ferramentas.append(mensagem["name"])
+            estado.chamou_ferramenta = True
+            estado.pedidas[mensagem["id"]] = time.monotonic()
             print(f"    -> {mensagem['name']}({json.dumps(mensagem['args'], ensure_ascii=False)})")
         else:
+            pedida = estado.pedidas.pop(mensagem["id"], None)
+            if pedida is not None:
+                estado.duracao_por_ferramenta.setdefault(mensagem["name"], []).append(
+                    time.monotonic() - pedida
+                )
             resposta = json.dumps(mensagem["response"], ensure_ascii=False)
             print(f"    <- {mensagem['name']}: {resposta[:400]}", flush=True)
 
@@ -156,6 +181,19 @@ async def conversar(telefone: str, falas: list[str], voz: str) -> list[float]:
     tarefas.add(asyncio.create_task(_microfone(fonte, fala, estado)))
 
     estado.fim_da_fala = time.monotonic()
+    if interromper_apos:
+        await asyncio.sleep(interromper_apos)
+        amostras = await asyncio.to_thread(_sintetizar, "Espera, espera um pouquinho.", voz)
+        inicio_da_fala = time.monotonic()
+        estado.terminou_de_falar.clear()
+        fala.put_nowait(amostras)
+        await asyncio.sleep(0.3)
+        ouvindo_ate = time.monotonic() + 6.0
+        ultimo_antes = 0.0
+        while time.monotonic() < ouvindo_ate and not estado.terminou_de_falar.is_set():
+            ultimo_antes = estado.ultimo_som
+            await asyncio.sleep(0.05)
+        print(f"[barge-in: agente parou {ultimo_antes - inicio_da_fala:.2f} s após a fala começar]")
     await _esperar_fim_do_turno(estado)
     print(f"[abertura em {estado.latencias[0] if estado.latencias else -1:.2f} s]", flush=True)
     for texto in falas:
@@ -164,6 +202,7 @@ async def conversar(telefone: str, falas: list[str], voz: str) -> list[float]:
         print(f"[paciente] {texto}", flush=True)
         amostras = await asyncio.to_thread(_sintetizar, texto, voz)
         estado.ultimo_som = 0.0
+        estado.chamou_ferramenta = False
         estado.terminou_de_falar.clear()
         fala.put_nowait(amostras)
         await estado.terminou_de_falar.wait()
@@ -173,21 +212,23 @@ async def conversar(telefone: str, falas: list[str], voz: str) -> list[float]:
     await sala.disconnect()
     for tarefa in tarefas:
         tarefa.cancel()
-    return estado.latencias[1:]
+    return estado
 
 
 def _principal() -> None:
     argumentos = argparse.ArgumentParser(description=__doc__)
     argumentos.add_argument("--telefone", default="+5511900000001")
     argumentos.add_argument("--voz", default="Luciana")
+    argumentos.add_argument("--interromper-apos", type=float, default=0.0)
     argumentos.add_argument("falas", nargs="*")
     lidos = argumentos.parse_args()
-    latencias = asyncio.run(conversar(lidos.telefone, lidos.falas, lidos.voz))
-    if latencias:
-        ordenadas = sorted(latencias)
-        p95 = ordenadas[max(0, round(0.95 * len(ordenadas)) - 1)]
-        mediana = statistics.median(ordenadas)
-        print(f"turnos={len(ordenadas)} mediana={mediana:.2f}s p95={p95:.2f}s", flush=True)
+    estado = asyncio.run(conversar(lidos.telefone, lidos.falas, lidos.voz, lidos.interromper_apos))
+    # A abertura fica de fora: ela não vem depois de uma fala do paciente.
+    print(_resumo("todos os turnos", estado.latencias[1:]))
+    print(_resumo("sem ferramenta", estado.sem_ferramenta[1:]))
+    print(_resumo("com ferramenta", estado.com_ferramenta))
+    for nome, duracoes in estado.duracao_por_ferramenta.items():
+        print(_resumo(f"ferramenta {nome}", duracoes))
 
 
 if __name__ == "__main__":

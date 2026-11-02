@@ -285,3 +285,8 @@ def test_pagina_so_usa_telefones_do_seed() -> None:
     pagina = files("clinica_agent").joinpath("navegador.html").read_text("utf-8")
     for telefone in re.findall(r"\+55\d{10,11}", pagina):
         assert telefone.startswith("+55119000000"), telefone
+
+
+def test_opcional_vazia_no_ambiente_nao_derruba_o_agente(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("AGENTE_SILENCIO_FIM_DE_FALA_MS", "")
+    assert ConfigAgente().silencio_fim_de_fala_ms is None

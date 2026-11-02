@@ -5,7 +5,10 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class ConfigAgente(BaseSettings):
-    model_config = SettingsConfigDict(env_prefix="AGENTE_", env_file=".env", extra="ignore")
+    # env_ignore_empty: o Compose repassa as opcionais vazias.
+    model_config = SettingsConfigDict(
+        env_prefix="AGENTE_", env_file=".env", extra="ignore", env_ignore_empty=True
+    )
 
     modelo_voz: str = "gemini-3.1-flash-live-preview"
     api_url: str = "http://localhost:8000"
@@ -14,6 +17,8 @@ class ConfigAgente(BaseSettings):
     # Vazio: usa a única clínica da instalação.
     clinica_id: UUID | None = None
     permitir_telefone_de_teste: bool = False
+    # Silêncio até o modelo considerar que a pessoa terminou. Vazio: o padrão do Gemini.
+    silencio_fim_de_fala_ms: int | None = None
 
 
 class ConfigLiveKit(BaseSettings):
