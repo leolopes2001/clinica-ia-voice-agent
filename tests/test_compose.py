@@ -11,13 +11,15 @@ IMAGENS = {
     "postgres": "pgvector/pgvector:pg16",
     "rabbitmq": "rabbitmq:3-management",
     "redis": "redis:7",
+    "livekit": "livekit/livekit-server:v1.13.11",
 }
-CONSTRUIDOS = ["api", "worker", "mcp-clinica", "mcp-conhecimento"]
+CONSTRUIDOS = ["api", "worker", "mcp-clinica", "mcp-conhecimento", "agent"]
 DOCKERFILES = {servico: servico.replace("-", "_") for servico in CONSTRUIDOS}
 PORTAS = {
     "postgres": {("127.0.0.1", "5432")},
     "rabbitmq": {("127.0.0.1", "5672"), ("127.0.0.1", "15672")},
     "redis": set[tuple[str, str]](),
+    "livekit": {("127.0.0.1", "7880"), ("127.0.0.1", "7881"), ("127.0.0.1", "7882")},
 }
 
 
@@ -74,6 +76,19 @@ def test_api_depende_de_postgres_e_rabbitmq_saudaveis(configuracao: dict[str, An
         "postgres": "service_healthy",
         "rabbitmq": "service_healthy",
     }
+
+
+def test_agente_sem_portas_e_na_rede_do_livekit(configuracao: dict[str, Any]) -> None:
+    agente = configuracao["agent"]
+    assert "ports" not in agente
+    assert agente["network_mode"] == "service:livekit"
+    assert agente["depends_on"]["mcp-clinica"]["condition"] == "service_healthy"
+    assert agente["depends_on"]["mcp-conhecimento"]["condition"] == "service_healthy"
+    assert "AGENTE_MODELO_VOZ" in agente["environment"]
+
+
+def test_pagina_de_teste_so_com_perfil(configuracao: dict[str, Any]) -> None:
+    assert "teste-navegador" not in configuracao
 
 
 def test_worker_nao_publica_portas(configuracao: dict[str, Any]) -> None:

@@ -38,6 +38,15 @@ class SegurarPorNomeEntrada(_Entrada):
     inicio: AwareDatetime
 
 
+class ClinicaResumo(BaseModel):
+    clinica_id: UUID
+    nome: str
+
+
+class Clinicas(BaseModel):
+    clinicas: list[ClinicaResumo]
+
+
 class CriarChamadaEntrada(_Entrada):
     telefone: Annotated[str, StringConstraints(pattern=r"^\+[1-9]\d{7,14}$")]
     sala: _Texto

@@ -19,6 +19,7 @@ from clinica_api.esquemas import (
     CadastrarPacienteEntrada,
     CancelarEntrada,
     ChamadaCriada,
+    Clinicas,
     ConfirmarEntrada,
     ConsultasFuturas,
     CriarChamadaEntrada,
@@ -187,6 +188,10 @@ def criar_app(
         return await agenda.cancelar(
             sessao, contexto, agendamento_id, entrada, chave, publicador_agenda
         )
+
+    @app.get("/clinicas")
+    async def clinicas(sessao: Sessao) -> Clinicas:
+        return await chamadas.listar_clinicas(sessao)
 
     @app.post("/chamadas", status_code=HTTPStatus.CREATED)
     async def criar_chamada(

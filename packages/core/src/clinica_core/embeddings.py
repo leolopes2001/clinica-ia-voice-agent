@@ -43,7 +43,7 @@ class GeminiEmbeddings:
     async def _gerar(self, textos: Sequence[str], tipo: str) -> list[list[float]]:
         resposta = await self._obter_cliente().aio.models.embed_content(
             model=self._config.embedding_modelo,
-            contents=list(textos),
+            contents=list(textos),  # type: ignore[arg-type]
             config=types.EmbedContentConfig(
                 task_type=tipo, output_dimensionality=DIMENSAO_EMBEDDING
             ),

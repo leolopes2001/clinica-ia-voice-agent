@@ -3,7 +3,18 @@ name = "clinica-agent"
 version = "0.1.0"
 description = "Agente de voz da recepcionista"
 requires-python = ">=3.12,<3.13"
-dependencies = ["clinica-core[rabbit]", "google-adk>=2.9", "httpx"]
+dependencies = [
+    "asyncpg",
+    "clinica-core[rabbit]",
+    "fastapi",
+    "google-adk[livekit]>=2.9",
+    "httpx",
+    "livekit-agents>=1.4",
+    "livekit-api",
+    "mcp>=2,<3",
+    "tzdata",
+    "uvicorn",
+]
 
 [build-system]
 requires = ["uv_build>=0.12.1,<0.13"]

@@ -167,6 +167,85 @@ services:
       retries: 10
       start_period: 15s
 
+  livekit:
+    image: livekit/livekit-server:v1.13.11
+    restart: unless-stopped
+    command: ["--config", "/etc/livekit.yaml", "--node-ip", "${LIVEKIT_NODE_IP:-127.0.0.1}"]
+    environment:
+      LIVEKIT_KEYS: "${LIVEKIT_API_KEY:-clinica-dev}: ${LIVEKIT_API_SECRET:-segredo-de-desenvolvimento-troque-antes-de-usar}"
+    volumes:
+      - ./infra/livekit.yaml:/etc/livekit.yaml:ro
+    ports:
+      # Só na própria máquina: o gateway da Fase 4 fala com o livekit-sip, não com estas portas.
+      - "127.0.0.1:7880:7880"
+      - "127.0.0.1:7881:7881"
+      - "127.0.0.1:7882:7882/udp"
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "-", "http://localhost:7880/"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
+
+  agent:
+    build:
+      context: .
+      dockerfile: services/agent/Dockerfile
+    restart: unless-stopped
+    # O LiveKit anuncia a mídia em 127.0.0.1, para o navegador. Na rede dele, o agente também alcança.
+    network_mode: service:livekit
+    environment: &ambiente-agente
+      LIVEKIT_URL: ws://localhost:7880
+      LIVEKIT_API_KEY: ${LIVEKIT_API_KEY:-clinica-dev}
+      LIVEKIT_API_SECRET: ${LIVEKIT_API_SECRET:-segredo-de-desenvolvimento-troque-antes-de-usar}
+      GOOGLE_API_KEY: ${GOOGLE_API_KEY:-}
+      AGENTE_MODELO_VOZ: ${AGENTE_MODELO_VOZ:-gemini-3.1-flash-live-preview}
+      AGENTE_API_URL: http://api:8000
+      AGENTE_MCP_CLINICA_URL: http://mcp-clinica:8000/mcp
+      AGENTE_MCP_CONHECIMENTO_URL: http://mcp-conhecimento:8000/mcp
+      # Só o teste pelo navegador usa. Na ligação real, o telefone vem do SIP (T4.6).
+      AGENTE_PERMITIR_TELEFONE_DE_TESTE: ${AGENTE_PERMITIR_TELEFONE_DE_TESTE:-true}
+    depends_on:
+      livekit:
+        condition: service_healthy
+        # Recriar o LiveKit troca a rede: o agente precisa reiniciar junto.
+        restart: true
+      mcp-clinica:
+        condition: service_healthy
+      mcp-conhecimento:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - import urllib.request; urllib.request.urlopen('http://localhost:8081/')
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  # Página de teste por voz, só com `--profile teste`. Nunca sobe na clínica.
+  teste-navegador:
+    profiles: ["teste"]
+    build:
+      context: .
+      dockerfile: services/agent/Dockerfile
+    command: ["python", "-m", "clinica_agent.navegador"]
+    environment:
+      <<: *ambiente-agente
+      LIVEKIT_URL: ws://livekit:7880
+      # O endereço que o navegador usa, diferente do da rede interna do Docker.
+      LIVEKIT_URL_NAVEGADOR: ws://localhost:7880
+    ports:
+      - "127.0.0.1:8090:8090"
+    depends_on:
+      agent:
+        condition: service_healthy
+
 volumes:
   postgres_data:
   rabbitmq_data:
