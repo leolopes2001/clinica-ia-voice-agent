@@ -133,7 +133,9 @@ def criar_servidor(api: httpx.AsyncClient) -> MCPServer:
 
     @mcp.tool()
     async def verificar_identidade(data_nascimento: date, ctx: Context) -> dict[str, Any]:
-        """Confere a data de nascimento (AAAA-MM-DD) do paciente selecionado.
+        """Confere a data de nascimento (AAAA-MM-DD) dita pela pessoa nesta ligação.
+
+        Nunca chame sem a pessoa ter dito a data: cada erro gasta uma tentativa.
 
         Devolve ok true ou false e as tentativas restantes. São 3 erros por chamada: depois disso,
         o motivo é tentativas_esgotadas, e o agente deve oferecer a transferência para a recepção.

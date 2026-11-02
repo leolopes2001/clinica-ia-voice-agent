@@ -1,11 +1,16 @@
+import asyncio
 import json
+import re
 from datetime import UTC, datetime
+from importlib.resources import files
 from typing import Any
 from uuid import uuid4
 
 import httpx
 import pytest
+from fastapi.testclient import TestClient
 from google.adk.events import Event
+from google.adk.tools.base_tool import BaseTool
 from google.genai import types
 
 from clinica_agent.chamada import (
@@ -15,8 +20,15 @@ from clinica_agent.chamada import (
     abrir_chamada,
     telefone_do_chamador,
 )
-from clinica_agent.config import ConfigAgente
-from clinica_agent.recepcionista import cabecalhos_da_chamada, criar_agente, montar_prompt
+from clinica_agent.config import ConfigAgente, ConfigLiveKit
+from clinica_agent.navegador import criar_app as criar_app_navegador
+from clinica_agent.recepcionista import (
+    _esperar_antes,
+    _executar_em_serie,
+    cabecalhos_da_chamada,
+    criar_agente,
+    montar_prompt,
+)
 from clinica_agent.resumo import resumir
 
 TELEFONE = "+5511900000001"
@@ -178,3 +190,98 @@ def test_desfecho_vem_da_ferramenta_que_deu_certo(ferramenta: str, desfecho: str
 def test_ferramenta_que_falhou_nao_vira_desfecho() -> None:
     falha = _resposta("confirmar_agendamento", {"ok": False, "motivo": "hold_perdido"})
     assert resumir([_falou("oi"), falha]).desfecho == "duvida"
+
+
+# ---- Ferramentas
+
+
+class _Ferramenta(BaseTool):
+    def __init__(self, nome: str, registro: list[str], demora: float = 0.0) -> None:
+        super().__init__(name=nome, description=nome)
+        self.registro = registro
+        self.demora = demora
+
+    async def run_async(self, *, args: dict[str, Any], tool_context: Any) -> Any:
+        self.registro.append(f"inicio {self.name}")
+        await asyncio.sleep(self.demora)
+        self.registro.append(f"fim {self.name}")
+        return {"ok": True}
+
+
+async def test_ferramentas_rodam_uma_por_vez_na_ordem_pedida() -> None:
+    registro: list[str] = []
+    trava = asyncio.Lock()
+    verificar = _Ferramenta("verificar", registro, demora=0.01)
+    listar = _Ferramenta("listar", registro)
+    _executar_em_serie(verificar, trava)
+    _executar_em_serie(listar, trava)
+    await asyncio.gather(
+        verificar.run_async(args={}, tool_context=None),
+        listar.run_async(args={}, tool_context=None),
+    )
+    assert registro == ["inicio verificar", "fim verificar", "inicio listar", "fim listar"]
+
+
+async def test_ferramenta_que_falha_libera_a_proxima() -> None:
+    trava = asyncio.Lock()
+    registro: list[str] = []
+
+    class _Falha(_Ferramenta):
+        async def run_async(self, *, args: dict[str, Any], tool_context: Any) -> Any:
+            raise RuntimeError("caiu")
+
+    falha = _Falha("falha", registro)
+    proxima = _Ferramenta("proxima", registro)
+    _executar_em_serie(falha, trava)
+    _executar_em_serie(proxima, trava)
+    with pytest.raises(RuntimeError):
+        await falha.run_async(args={}, tool_context=None)
+    assert await proxima.run_async(args={}, tool_context=None) == {"ok": True}
+
+
+async def test_desligar_espera_a_despedida() -> None:
+    registro: list[str] = []
+    desligar = _Ferramenta("end_call", registro)
+    _esperar_antes(desligar, 0.02)
+    tarefa = asyncio.create_task(desligar.run_async(args={}, tool_context=None))
+    await asyncio.sleep(0)
+    assert registro == []
+    await tarefa
+    assert registro == ["inicio end_call", "fim end_call"]
+
+
+def test_prompt_proibe_inventar_dados() -> None:
+    assert "Nunca invente o valor" in montar_prompt("X", datetime(2026, 11, 3, tzinfo=UTC))
+
+
+# ---- Página de teste
+
+
+@pytest.fixture
+def navegador(monkeypatch: pytest.MonkeyPatch) -> TestClient:
+    async def despacho_falso(_: Any, telefone: str) -> tuple[str, str]:
+        return "sala-1", f"token-{telefone}"
+
+    monkeypatch.setattr("clinica_agent.navegador.despachar_chamada_de_teste", despacho_falso)
+    return TestClient(criar_app_navegador(ConfigLiveKit(url_navegador="ws://localhost:7880")))
+
+
+def test_pagina_de_teste_abre(navegador: TestClient) -> None:
+    resposta = navegador.get("/")
+    assert resposta.status_code == 200
+    assert "Paciente novo" in resposta.text
+
+
+def test_pagina_entrega_token_e_endereco_do_navegador(navegador: TestClient) -> None:
+    corpo = navegador.post("/chamada", json={"telefone": TELEFONE}).json()
+    assert corpo == {"url": "ws://localhost:7880", "token": f"token-{TELEFONE}", "sala": "sala-1"}
+
+
+def test_pagina_recusa_telefone_invalido(navegador: TestClient) -> None:
+    assert navegador.post("/chamada", json={"telefone": "123"}).status_code == 422
+
+
+def test_pagina_so_usa_telefones_do_seed() -> None:
+    pagina = files("clinica_agent").joinpath("navegador.html").read_text("utf-8")
+    for telefone in re.findall(r"\+55\d{10,11}", pagina):
+        assert telefone.startswith("+55119000000"), telefone

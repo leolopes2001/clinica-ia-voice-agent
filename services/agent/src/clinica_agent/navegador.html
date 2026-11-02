@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<title>Clínica Voz: teste por voz</title>
+<style>
+  body { font: 16px/1.5 system-ui, sans-serif; max-width: 960px; margin: 2rem auto; padding: 0 1rem; color: #1c1c1c; }
+  h1 { font-size: 1.4rem; margin-bottom: .25rem; }
+  .aviso { color: #666; margin-top: 0; }
+  .controles { display: flex; gap: .75rem; align-items: center; flex-wrap: wrap; margin: 1.25rem 0; }
+  select, button { font: inherit; padding: .5rem .9rem; }
+  #estado { font-weight: 600; }
+  .colunas { display: grid; grid-template-columns: 3fr 2fr; gap: 1rem; }
+  .painel { border: 1px solid #ddd; border-radius: 8px; padding: .75rem 1rem; height: 26rem; overflow-y: auto; }
+  h2 { font-size: 1rem; margin: 0 0 .5rem; }
+  .fala { margin: .4rem 0; }
+  .quem { font-weight: 600; }
+  .ferramenta { font: 13px/1.4 ui-monospace, monospace; margin: .35rem 0; word-break: break-word; }
+  .erro { color: #b00020; }
+</style>
+</head>
+<body>
+<h1>Recepcionista de voz: teste interno</h1>
+<p class="aviso">Só para teste, com os telefones fictícios do seed. Use fones de ouvido, para o microfone não captar a voz do agente.</p>
+<div class="controles">
+  <label for="telefone">Ligar como:</label>
+  <select id="telefone">
+    <option value="+5511900000001">Maria Oliveira (+55 11 90000-0001)</option>
+    <option value="+5511900000002">Carla e Bruno Mendes (+55 11 90000-0002)</option>
+    <option value="+5511900000099">Paciente novo (+55 11 90000-0099)</option>
+  </select>
+  <button id="ligar">Ligar</button>
+  <button id="desligar" disabled>Desligar</button>
+  <span id="estado">Desligado</span>
+</div>
+<div class="colunas">
+  <section class="painel" id="conversa"><h2>Conversa</h2></section>
+  <section class="painel" id="ferramentas"><h2>Ferramentas</h2></section>
+</div>
+<script src="https://cdn.jsdelivr.net/npm/livekit-client@2.23.0/dist/livekit-client.umd.js"
+        integrity="sha384-HkA7rQNo8H04l1p4zoXX1Cy+h9YoYp8LvKt4vfMFhv4KFk07UkrNwIUnyBum8Pw6" crossorigin="anonymous"></script>
+<script>
+const { Room, RoomEvent, Track } = LivekitClient;
+const el = (id) => document.getElementById(id);
+const ESTADOS = { initializing: "Conectando", listening: "Ouvindo", thinking: "Pensando", speaking: "Falando" };
+let sala = null;
+
+function anexar(painel, classe, texto, quem) {
+  const linha = document.createElement("div");
+  linha.className = classe;
+  if (quem) {
+    const nome = document.createElement("span");
+    nome.className = "quem";
+    nome.textContent = quem + ": ";
+    linha.append(nome);
+  }
+  linha.append(texto);
+  el(painel).append(linha);
+  el(painel).scrollTop = el(painel).scrollHeight;
+}
+
+function aoDesconectar() {
+  sala = null;
+  el("estado").textContent = "Desligado";
+  el("ligar").disabled = false;
+  el("desligar").disabled = true;
+  el("telefone").disabled = false;
+  document.querySelectorAll("audio").forEach((a) => a.remove());
+}
+
+async function ligar() {
+  el("ligar").disabled = true;
+  el("telefone").disabled = true;
+  el("estado").textContent = "Ligando";
+  try {
+    const resposta = await fetch("/chamada", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ telefone: el("telefone").value }),
+    });
+    if (!resposta.ok) throw new Error("O servidor de teste respondeu " + resposta.status);
+    const { url, token } = await resposta.json();
+    sala = new Room({ audioCaptureDefaults: { echoCancellation: true, noiseSuppression: true } });
+    sala.on(RoomEvent.TrackSubscribed, (faixa) => {
+      if (faixa.kind === Track.Kind.Audio) document.body.append(faixa.attach());
+    });
+    sala.on(RoomEvent.ParticipantAttributesChanged, (mudou) => {
+      const estado = mudou["lk.agent.state"];
+      if (estado) el("estado").textContent = ESTADOS[estado] || estado;
+    });
+    sala.on(RoomEvent.ParticipantDisconnected, () => sala && sala.disconnect());
+    sala.on(RoomEvent.Disconnected, aoDesconectar);
+    sala.on(RoomEvent.DataReceived, (dados, _p, _t, topico) => {
+      if (topico !== "adk") return;
+      const m = JSON.parse(new TextDecoder().decode(dados));
+      if (m.type === "function_call") {
+        anexar("ferramentas", "ferramenta", "→ " + m.name + " " + JSON.stringify(m.args));
+      } else {
+        const r = m.response && m.response.structuredContent ? m.response.structuredContent : m.response;
+        anexar("ferramentas", "ferramenta", "← " + m.name + " " + JSON.stringify(r));
+      }
+    });
+    sala.registerTextStreamHandler("lk.transcription", async (leitor, participante) => {
+      const atributos = leitor.info.attributes || {};
+      const texto = (await leitor.readAll()).trim();
+      if (atributos["lk.transcription_final"] !== "true" || !texto) return;
+      const eAgente = participante.identity.startsWith("agent-");
+      anexar("conversa", "fala", texto, eAgente ? "Recepcionista" : "Você");
+    });
+    await sala.connect(url, token);
+    await sala.startAudio();
+    await sala.localParticipant.setMicrophoneEnabled(true);
+    el("desligar").disabled = false;
+    el("estado").textContent = "Conectando";
+  } catch (erro) {
+    anexar("conversa", "fala erro", String(erro.message || erro));
+    if (sala) await sala.disconnect();
+    aoDesconectar();
+  }
+}
+
+el("ligar").addEventListener("click", ligar);
+el("desligar").addEventListener("click", () => sala && sala.disconnect());
+</script>
+</body>
+</html>
