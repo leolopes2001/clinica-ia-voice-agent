@@ -29,7 +29,7 @@ Se algo no código conflitar com a spec, a spec vence. Se a spec estiver errada 
 ## Stack
 
 - Agente: `google-adk[livekit]` >= 2.9 (LiveKitRunner, experimental), `livekit-agents` >= 1.4, modelo `gemini-live-2.5-flash-native-audio`
-- MCP: SDK oficial `mcp` (FastMCP), transporte Streamable HTTP — `mcp-clinica` e `mcp-conhecimento`
+- MCP: SDK oficial `mcp` 2.x (`MCPServer`, antigo FastMCP), transporte Streamable HTTP — `mcp-clinica` e `mcp-conhecimento`
 - API e painel: FastAPI, SQLAlchemy 2 async, asyncpg, Alembic, Pydantic v2, Jinja2 + HTMX + SSE
 - Dados: PostgreSQL 16 + pgvector + btree_gist
 - Broker: RabbitMQ (`aio-pika`). O Redis existe só porque o LiveKit exige.

@@ -1,3 +1,5 @@
+import hashlib
+from collections import OrderedDict
 from collections.abc import Sequence
 from typing import Protocol
 
@@ -61,3 +63,27 @@ class GeminiEmbeddings:
 
     async def pergunta(self, texto: str) -> list[float]:
         return (await self._gerar([texto], "RETRIEVAL_QUERY"))[0]
+
+
+class CacheDePerguntas:
+    """LRU em memória para as perguntas. A chave é um hash: o texto pode ter dado de saúde."""
+
+    def __init__(self, gerador: GeradorEmbeddings, tamanho: int) -> None:
+        self._gerador = gerador
+        self._tamanho = tamanho
+        self._vetores: OrderedDict[bytes, list[float]] = OrderedDict()
+
+    async def documentos(self, textos: Sequence[str]) -> list[list[float]]:
+        return await self._gerador.documentos(textos)
+
+    async def pergunta(self, texto: str) -> list[float]:
+        chave = hashlib.sha256(" ".join(texto.casefold().split()).encode()).digest()
+        vetor = self._vetores.get(chave)
+        if vetor is not None:
+            self._vetores.move_to_end(chave)
+            return vetor
+        vetor = await self._gerador.pergunta(texto)
+        self._vetores[chave] = vetor
+        if len(self._vetores) > self._tamanho:
+            self._vetores.popitem(last=False)
+        return vetor
