@@ -13,6 +13,8 @@ COPY services ./services
 RUN uv sync --frozen --no-dev --package clinica-worker
 
 RUN useradd --system --no-create-home clinica
+# O volume novo herda o dono deste diretório.
+RUN mkdir -p /dados/conhecimento && chown clinica /dados/conhecimento
 USER clinica
 
 ENV PATH="/app/.venv/bin:$PATH"

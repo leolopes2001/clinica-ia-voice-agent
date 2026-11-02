@@ -9,6 +9,7 @@ dependencies = [
 
 [project.optional-dependencies]
 db = ["asyncpg", "pgvector", "sqlalchemy[asyncio]"]
+embeddings = ["google-genai"]
 rabbit = ["aio-pika"]
 
 [build-system]

@@ -6,15 +6,18 @@ from pathlib import Path
 from aio_pika.abc import AbstractChannel, AbstractIncomingMessage
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from clinica_core.config import ConfigPostgres, ConfigRabbit
+from clinica_core.config import ConfigConhecimento, ConfigEmbeddings, ConfigPostgres, ConfigRabbit
 from clinica_core.db import criar_engine, criar_fabrica_sessoes
+from clinica_core.embeddings import GeminiEmbeddings, GeradorEmbeddings
 from clinica_core.eventos import publicar_eventos
 from clinica_core.mensageria import (
+    FILA_CONHECIMENTO_INDEXAR,
     FILA_HOLDS_EXPIRAR,
     abrir_canal,
     conectar,
     declarar_topologia,
 )
+from clinica_worker import conhecimento
 from clinica_worker.holds import expirar_vencidos, processar_mensagem
 
 logger = logging.getLogger(__name__)
@@ -46,10 +49,14 @@ async def rodar(
     parar: asyncio.Event,
     intervalo_s: float = INTERVALO_VARREDURA_S,
     arquivo_vivo: Path = ARQUIVO_VIVO,
+    gerador: GeradorEmbeddings | None = None,
+    config_conhecimento: ConfigConhecimento | None = None,
 ) -> None:
     engine = criar_engine(config_postgres)
     fabrica = criar_fabrica_sessoes(engine)
     conexao = await conectar(config_rabbit)
+    gerador_embeddings = gerador or GeminiEmbeddings(ConfigEmbeddings())
+    diretorio = (config_conhecimento or ConfigConhecimento()).dir
 
     try:
         canal = await abrir_canal(conexao)
@@ -61,6 +68,15 @@ async def rodar(
         await declarar_topologia(canal)
         fila = await canal.get_queue(FILA_HOLDS_EXPIRAR)
         await fila.consume(consumir)
+
+        async def consumir_indexacao(mensagem: AbstractIncomingMessage) -> None:
+            await conhecimento.processar_mensagem(fabrica, gerador_embeddings, diretorio, mensagem)
+
+        # Canal próprio: um documento por vez, sem atrasar a expiração dos holds.
+        canal_indexacao = await abrir_canal(conexao)
+        await canal_indexacao.set_qos(prefetch_count=1)
+        fila_indexacao = await canal_indexacao.get_queue(FILA_CONHECIMENTO_INDEXAR)
+        await fila_indexacao.consume(consumir_indexacao)
         while not parar.is_set():
             await _varrer(fabrica, canal, arquivo_vivo)
             try:
