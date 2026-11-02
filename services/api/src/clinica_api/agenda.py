@@ -52,6 +52,7 @@ class Contexto:
     chamada_id: UUID | None = None
     paciente_id: UUID | None = None
     identidade_verificada: bool = False
+    consentimento: bool = False
 
     @property
     def voz(self) -> bool:
@@ -82,6 +83,7 @@ async def _ler_contexto(
             chamada.id,
             chamada.paciente_id,
             chamada.paciente_id is not None and chamada.identidade_verificada_em is not None,
+            chamada.consentimento_em is not None,
         )
     if clinica_id is None:
         raise ErroAgenda("contexto_ausente")
@@ -342,6 +344,11 @@ async def confirmar(
 
     await publicador.eventos([evento])
     return resposta
+
+
+def exigir_consentimento(contexto: Contexto) -> None:
+    if contexto.voz and not contexto.consentimento:
+        raise ErroAgenda("consentimento_ausente")
 
 
 def exigir_identidade(contexto: Contexto) -> None:

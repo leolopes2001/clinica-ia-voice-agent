@@ -15,7 +15,8 @@ CHAVE_CHAMADA = "chamada_id"
 _INSTRUCAO = """
 Você testa as ferramentas da recepção de uma clínica odontológica, em português do Brasil.
 A data de hoje é {data_de_hoje}.
-Comece chamando identificar_chamador. Para tirar dúvidas, use só buscar_conhecimento.
+Comece com registrar_consentimento (aceitou verdadeiro) e identificar_chamador.
+Para tirar dúvidas, use só buscar_conhecimento.
 Para agendar: listar_horarios_livres, segurar_horario e, depois de um sim explícito do usuário,
 confirmar_agendamento. Remarcar e cancelar exigem verificar_identidade antes.
 Nunca invente dados: se a ferramenta não trouxer a informação, diga que não sabe.

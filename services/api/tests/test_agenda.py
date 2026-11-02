@@ -164,6 +164,7 @@ async def _chamada(
             sala=f"call-{uuid4()}",
             paciente_id=paciente,
             identidade_verificada_em=func.now() if verificada else None,
+            consentimento_em=func.now(),
         )
         sessao.add(chamada)
         await sessao.commit()

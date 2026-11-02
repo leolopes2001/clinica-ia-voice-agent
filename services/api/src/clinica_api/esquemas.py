@@ -52,6 +52,14 @@ class CriarChamadaEntrada(_Entrada):
     sala: _Texto
 
 
+class ConsentimentoEntrada(_Entrada):
+    aceitou: bool
+
+
+class ConsentimentoRegistrado(BaseModel):
+    consentimento: bool
+
+
 class SelecionarPacienteEntrada(_Entrada):
     paciente_id: UUID
 

@@ -11,7 +11,10 @@ from livekit.agents import AgentServer, AutoSubscribe, JobContext, cli
 
 from clinica_agent.chamada import CHAVE_CHAMADA, abrir_chamada, telefone_do_chamador
 from clinica_agent.config import ConfigAgente
+from clinica_agent.encerramento import publicar_encerramento
 from clinica_agent.recepcionista import criar_agente
+from clinica_agent.resumo import resumir
+from clinica_core.config import ConfigRabbit
 
 logger = logging.getLogger(__name__)
 
@@ -44,6 +47,12 @@ async def _preparar_sessao(servico: BaseSessionService, sessao_id: str, chamada_
     )
 
 
+async def _encerrar(servico: BaseSessionService, sessao_id: str, chamada_id: str) -> None:
+    sessao = await servico.get_session(app_name=APP, user_id=USUARIO_ADK, session_id=sessao_id)
+    if sessao is not None:
+        await publicar_encerramento(ConfigRabbit(), chamada_id, resumir(sessao.events))
+
+
 @server.rtc_session(agent_name=NOME_AGENTE)
 async def atender(ctx: JobContext) -> None:
     config = ConfigAgente()
@@ -70,6 +79,7 @@ async def atender(ctx: JobContext) -> None:
             create_session=False,
         ).start()
     finally:
+        await _encerrar(servico, ctx.room.name, chamada.chamada_id)
         ctx.shutdown("ligação encerrada")
 
 

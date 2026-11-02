@@ -21,6 +21,8 @@ from clinica_api.esquemas import (
     ChamadaCriada,
     Clinicas,
     ConfirmarEntrada,
+    ConsentimentoEntrada,
+    ConsentimentoRegistrado,
     ConsultasFuturas,
     CriarChamadaEntrada,
     Falha,
@@ -55,6 +57,7 @@ _STATUS_POR_MOTIVO = {
     "procedimento_nao_encontrado": HTTPStatus.NOT_FOUND,
     "contexto_divergente": HTTPStatus.FORBIDDEN,
     "identidade_nao_verificada": HTTPStatus.FORBIDDEN,
+    "consentimento_ausente": HTTPStatus.FORBIDDEN,
     "agendamento_nao_encontrado": HTTPStatus.NOT_FOUND,
     "chamada_nao_encontrada": HTTPStatus.NOT_FOUND,
     "clinica_nao_encontrada": HTTPStatus.NOT_FOUND,
@@ -86,6 +89,14 @@ def _config(request: Request) -> ConfigAgenda:
 
 
 ContextoDaRequisicao = Annotated[Contexto, Depends(_contexto)]
+
+
+def _contexto_com_consentimento(contexto: ContextoDaRequisicao) -> Contexto:
+    agenda.exigir_consentimento(contexto)
+    return contexto
+
+
+ContextoComConsentimento = Annotated[Contexto, Depends(_contexto_com_consentimento)]
 Agenda = Annotated[ConfigAgenda, Depends(_config)]
 ChaveIdempotencia = Annotated[str, Header(alias="Idempotency-Key", min_length=1)]
 
@@ -149,7 +160,7 @@ def criar_app(
     async def segurar(
         entrada: SegurarEntrada,
         sessao: Sessao,
-        contexto: ContextoDaRequisicao,
+        contexto: ContextoComConsentimento,
         config: Agenda,
         chave: ChaveIdempotencia,
     ) -> HoldCriado:
@@ -160,7 +171,7 @@ def criar_app(
         hold_id: UUID,
         entrada: ConfirmarEntrada,
         sessao: Sessao,
-        contexto: ContextoDaRequisicao,
+        contexto: ContextoComConsentimento,
         chave: ChaveIdempotencia,
     ) -> AgendamentoConfirmado:
         return await agenda.confirmar(sessao, contexto, hold_id, entrada, chave, publicador_agenda)
@@ -170,7 +181,7 @@ def criar_app(
         agendamento_id: UUID,
         entrada: RemarcarEntrada,
         sessao: Sessao,
-        contexto: ContextoDaRequisicao,
+        contexto: ContextoComConsentimento,
         chave: ChaveIdempotencia,
     ) -> AgendamentoConfirmado:
         return await agenda.remarcar(
@@ -182,7 +193,7 @@ def criar_app(
         agendamento_id: UUID,
         entrada: CancelarEntrada,
         sessao: Sessao,
-        contexto: ContextoDaRequisicao,
+        contexto: ContextoComConsentimento,
         chave: ChaveIdempotencia,
     ) -> AgendamentoCancelado:
         return await agenda.cancelar(
@@ -202,25 +213,33 @@ def criar_app(
     ) -> ChamadaCriada:
         return await chamadas.criar_chamada(sessao, contexto, entrada, chave)
 
+    @app.post("/chamadas/consentimento")
+    async def consentimento(
+        entrada: ConsentimentoEntrada, sessao: Sessao, contexto: ContextoDaRequisicao
+    ) -> ConsentimentoRegistrado:
+        return await chamadas.registrar_consentimento(sessao, contexto, entrada)
+
     @app.post("/identidade/identificar")
-    async def identificar(sessao: Sessao, contexto: ContextoDaRequisicao) -> PacientesDoTelefone:
+    async def identificar(
+        sessao: Sessao, contexto: ContextoComConsentimento
+    ) -> PacientesDoTelefone:
         return await chamadas.identificar(sessao, contexto)
 
     @app.post("/identidade/selecionar")
     async def selecionar(
-        entrada: SelecionarPacienteEntrada, sessao: Sessao, contexto: ContextoDaRequisicao
+        entrada: SelecionarPacienteEntrada, sessao: Sessao, contexto: ContextoComConsentimento
     ) -> PacienteDaChamada:
         return await chamadas.selecionar(sessao, contexto, entrada)
 
     @app.post("/identidade/cadastrar")
     async def cadastrar(
-        entrada: CadastrarPacienteEntrada, sessao: Sessao, contexto: ContextoDaRequisicao
+        entrada: CadastrarPacienteEntrada, sessao: Sessao, contexto: ContextoComConsentimento
     ) -> PacienteDaChamada:
         return await chamadas.cadastrar(sessao, contexto, entrada)
 
     @app.post("/identidade/verificar")
     async def verificar(
-        entrada: VerificarIdentidadeEntrada, sessao: Sessao, contexto: ContextoDaRequisicao
+        entrada: VerificarIdentidadeEntrada, sessao: Sessao, contexto: ContextoComConsentimento
     ) -> ResultadoVerificacao:
         return await chamadas.verificar(sessao, contexto, entrada)
 
@@ -228,7 +247,7 @@ def criar_app(
     async def pedido_retorno(
         entrada: PedidoRetornoEntrada,
         sessao: Sessao,
-        contexto: ContextoDaRequisicao,
+        contexto: ContextoComConsentimento,
         chave: ChaveIdempotencia,
     ) -> PedidoRetornoCriado:
         return await chamadas.registrar_pedido_retorno(sessao, contexto, entrada, chave)
@@ -256,7 +275,7 @@ def criar_app(
     async def segurar_por_nome(
         entrada: SegurarPorNomeEntrada,
         sessao: Sessao,
-        contexto: ContextoDaRequisicao,
+        contexto: ContextoComConsentimento,
         config: Agenda,
         chave: ChaveIdempotencia,
     ) -> HoldFalado:
@@ -265,7 +284,9 @@ def criar_app(
         )
 
     @app.get("/agendamentos/meus")
-    async def meus_agendamentos(sessao: Sessao, contexto: ContextoDaRequisicao) -> ConsultasFuturas:
+    async def meus_agendamentos(
+        sessao: Sessao, contexto: ContextoComConsentimento
+    ) -> ConsultasFuturas:
         return await voz.listar_meus_agendamentos(sessao, contexto)
 
     return app

@@ -12,6 +12,8 @@ from clinica_api.esquemas import (
     ChamadaCriada,
     ClinicaResumo,
     Clinicas,
+    ConsentimentoEntrada,
+    ConsentimentoRegistrado,
     CriarChamadaEntrada,
     PacienteDaChamada,
     PacientesDoTelefone,
@@ -83,6 +85,25 @@ async def criar_chamada(
     return resposta
 
 
+async def registrar_consentimento(
+    sessao: AsyncSession, contexto: Contexto, entrada: ConsentimentoEntrada
+) -> ConsentimentoRegistrado:
+    chamada_id = _exigir_chamada(contexto)
+    async with transacao(sessao):
+        chamada = await _chamada_travada(sessao, chamada_id)
+        # A recusa vale até o fim da chamada, e um "sim" mal entendido não a desfaz.
+        if entrada.aceitou and chamada.consentimento_recusado_em is None:
+            if chamada.consentimento_em is None:
+                chamada.consentimento_em = func.now()
+            return ConsentimentoRegistrado(consentimento=True)
+        if chamada.consentimento_recusado_em is None:
+            chamada.consentimento_recusado_em = func.now()
+        chamada.consentimento_em = None
+        chamada.paciente_id = None
+        chamada.identidade_verificada_em = None
+    return ConsentimentoRegistrado(consentimento=False)
+
+
 async def identificar(sessao: AsyncSession, contexto: Contexto) -> PacientesDoTelefone:
     chamada_id = _exigir_chamada(contexto)
     async with transacao(sessao):
@@ -140,6 +161,7 @@ async def cadastrar(
                 nome=entrada.nome,
                 telefone_e164=chamada.telefone,
                 data_nascimento=entrada.data_nascimento,
+                consentimento_em=chamada.consentimento_em,
             )
             .on_conflict_do_nothing(constraint="uq_pacientes_mesma_pessoa")
         )
@@ -153,6 +175,8 @@ async def cadastrar(
                 )
             )
         ).one()
+        if paciente.consentimento_em is None:
+            paciente.consentimento_em = chamada.consentimento_em
         _trocar_paciente(chamada, paciente.id)
         resposta = _resumo(paciente)
     return resposta
