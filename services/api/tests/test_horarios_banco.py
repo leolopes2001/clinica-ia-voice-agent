@@ -121,7 +121,7 @@ def _agendamento(
     padrao: dict[str, Any] = {
         "status": "segurado",
         "expira_em": datetime.now(UTC) + timedelta(minutes=3),
-        "origem": "voz",
+        "origem": "painel",
     }
     return Agendamento(
         clinica_id=c.clinica_id,

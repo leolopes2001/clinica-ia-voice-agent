@@ -26,6 +26,7 @@ from clinica_api.horarios import (
     listar_alternativas,
     localizar_horario_na_grade,
 )
+from clinica_api.publicacao import PublicadorHolds
 from clinica_api.travas import travar
 from clinica_core.config import ConfigAgenda
 from clinica_core.modelos import Agendamento, Chamada, Clinica, Paciente
@@ -177,8 +178,10 @@ async def segurar(
     entrada: SegurarEntrada,
     chave: str,
     config: ConfigAgenda,
+    publicador: PublicadorHolds,
 ) -> HoldCriado:
     chave_completa = _chave(contexto, "segurar", chave)
+    resposta: HoldCriado | None = None
     async with _transacao(sessao):
         await travar(sessao, chave_completa)
         guardada = await idempotencia.buscar(sessao, chave_completa)
@@ -223,7 +226,11 @@ async def segurar(
                     fim_periodo=horario.fim_periodo,
                 )
                 await idempotencia.guardar(sessao, chave_completa, resposta.model_dump(mode="json"))
-                return resposta
+
+    if resposta is not None:
+        # Depois do commit: a mensagem nunca fala de um hold que não foi gravado.
+        await publicador.hold_criado(resposta.hold_id, timedelta(minutes=config.duracao_hold_min))
+        return resposta
 
     # Fora da transação: quem perdeu não calcula alternativas segurando os locks.
     alternativas = await listar_alternativas(

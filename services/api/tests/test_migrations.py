@@ -102,7 +102,7 @@ def _agendamento(
     padrao: dict[str, Any] = {
         "status": "segurado",
         "expira_em": SEGURADO_EM + timedelta(minutes=3),
-        "origem": "voz",
+        "origem": "painel",
     }
     return Agendamento(
         clinica_id=c.clinica_id,
@@ -257,6 +257,19 @@ async def test_confirmado_exige_paciente(sessao: AsyncSession, cenario: Cenario)
         "23514",
         "confirmado_exige_paciente",
     )
+
+
+async def test_voz_exige_chamada(sessao: AsyncSession, cenario: Cenario) -> None:
+    await _espera_erro(sessao, _agendamento(cenario, origem="voz"), "23514", "voz_exige_chamada")
+
+
+async def test_voz_com_chamada_e_painel_sem_chamada_passam(
+    sessao: AsyncSession, cenario: Cenario
+) -> None:
+    chamada = Chamada(clinica_id=cenario.clinica_id, telefone="+55", sala="x")
+    await _gravar(sessao, chamada)
+    await _gravar(sessao, _agendamento(cenario, 0, 30, origem="voz", chamada_id=chamada.id))
+    await _gravar(sessao, _agendamento(cenario, 30, 60, origem="painel"))
 
 
 async def test_status_e_origem_invalidos(sessao: AsyncSession, cenario: Cenario) -> None:

@@ -25,7 +25,8 @@ from clinica_api.esquemas import (
     SegurarEntrada,
 )
 from clinica_api.horarios import ProcedimentoNaoEncontrado, listar_horarios_livres
-from clinica_core.config import ConfigAgenda, ConfigPostgres
+from clinica_api.publicacao import PublicadorHolds, PublicadorRabbit
+from clinica_core.config import ConfigAgenda, ConfigPostgres, ConfigRabbit
 from clinica_core.db import criar_engine, criar_fabrica_sessoes
 
 _STATUS_POR_MOTIVO = {
@@ -81,13 +82,18 @@ def _procedimento_nao_encontrado(request: Request, erro: Exception) -> JSONRespo
 
 
 def criar_app(
-    config_postgres: ConfigPostgres | None = None, config_agenda: ConfigAgenda | None = None
+    config_postgres: ConfigPostgres | None = None,
+    config_agenda: ConfigAgenda | None = None,
+    publicador: PublicadorHolds | None = None,
 ) -> FastAPI:
     engine = criar_engine(config_postgres or ConfigPostgres())
+    publicador_holds = publicador or PublicadorRabbit(ConfigRabbit())
 
     @asynccontextmanager
     async def ciclo_de_vida(_: FastAPI) -> AsyncIterator[None]:
+        await publicador_holds.abrir()
         yield
+        await publicador_holds.fechar()
         await engine.dispose()
 
     app = FastAPI(title="Clínica Voz: API", lifespan=ciclo_de_vida)
@@ -125,7 +131,7 @@ def criar_app(
         config: Agenda,
         chave: ChaveIdempotencia,
     ) -> HoldCriado:
-        return await agenda.segurar(sessao, contexto, entrada, chave, config)
+        return await agenda.segurar(sessao, contexto, entrada, chave, config, publicador_holds)
 
     @app.post("/holds/{hold_id}/confirmar")
     async def confirmar(

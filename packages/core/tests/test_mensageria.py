@@ -1,11 +1,7 @@
 import asyncio
-import base64
-import json
-import urllib.error
-import urllib.request
-from collections.abc import AsyncIterator, Iterator
+from collections.abc import AsyncIterator, Awaitable, Callable
+from datetime import timedelta
 from typing import Any
-from uuid import uuid4
 
 import pytest
 from aio_pika.abc import AbstractChannel, AbstractIncomingMessage, AbstractRobustConnection
@@ -19,7 +15,6 @@ from clinica_core.mensageria import (
     FILA_HOLDS_ATRASO,
     FILA_HOLDS_EXPIRAR,
     FILA_MANUTENCAO_DIARIA,
-    TTL_HOLD_MS,
     abrir_canal,
     conectar,
     declarar_fila_painel,
@@ -40,48 +35,12 @@ FILAS_DURAVEIS = {
 }
 
 
+EXPIRACAO_CURTA = timedelta(milliseconds=50)
+ConsultarFilas = Callable[[], Awaitable[dict[str, Any]]]
+
+
 class Evento(BaseModel):
     id: int = 1
-
-
-def _gerencia(metodo: str, caminho: str, corpo: dict[str, str] | None = None) -> Any:
-    config = ConfigRabbit()
-    credenciais = f"{config.user}:{config.password.get_secret_value()}".encode()
-    pedido = urllib.request.Request(
-        f"http://{config.host}:15672/api/{caminho}",
-        method=metodo,
-        data=json.dumps(corpo).encode() if corpo is not None else None,
-        headers={
-            "Authorization": f"Basic {base64.b64encode(credenciais).decode()}",
-            "Content-Type": "application/json",
-        },
-    )
-    with urllib.request.urlopen(pedido, timeout=5) as resposta:
-        conteudo = resposta.read()
-    return json.loads(conteudo) if conteudo else None
-
-
-async def _filas(vhost: str) -> dict[str, Any]:
-    filas = await asyncio.to_thread(_gerencia, "GET", f"queues/{vhost}")
-    return {fila["name"]: fila for fila in filas}
-
-
-@pytest.fixture
-def vhost(monkeypatch: pytest.MonkeyPatch) -> Iterator[str]:
-    nome = f"teste_{uuid4().hex}"
-    usuario = ConfigRabbit().user
-    try:
-        _gerencia("PUT", f"vhosts/{nome}", {})
-    except (urllib.error.URLError, OSError):
-        pytest.skip("rabbitmq indisponível: rode `docker compose up -d --wait`")
-    _gerencia(
-        "PUT",
-        f"permissions/{nome}/{usuario}",
-        {"configure": ".*", "write": ".*", "read": ".*"},
-    )
-    monkeypatch.setenv("RABBITMQ_VHOST", nome)
-    yield nome
-    _gerencia("DELETE", f"vhosts/{nome}")
 
 
 @pytest.fixture
@@ -106,12 +65,15 @@ async def _receber(canal: AbstractChannel, nome: str) -> AbstractIncomingMessage
             await asyncio.sleep(0.02)
 
 
-async def test_topologia_tem_as_filas_da_spec(canal: AbstractChannel, vhost: str) -> None:
+async def test_topologia_tem_as_filas_da_spec(
+    canal: AbstractChannel, consultar_filas: ConsultarFilas
+) -> None:
     await declarar_topologia(canal)
-    filas = await _filas(vhost)
+    filas = await consultar_filas()
     assert set(filas) == FILAS_DURAVEIS
     assert all(fila["durable"] for fila in filas.values())
-    assert filas[FILA_HOLDS_ATRASO]["arguments"]["x-message-ttl"] == TTL_HOLD_MS == 180_000
+    # A duração vem de cada mensagem e muda sem recriar a fila.
+    assert "x-message-ttl" not in filas[FILA_HOLDS_ATRASO]["arguments"]
 
 
 async def test_declarar_duas_vezes_nao_da_erro(canal: AbstractChannel) -> None:
@@ -120,8 +82,8 @@ async def test_declarar_duas_vezes_nao_da_erro(canal: AbstractChannel) -> None:
 
 
 async def test_hold_vencido_chega_em_holds_expirar(canal: AbstractChannel) -> None:
-    await declarar_topologia(canal, ttl_hold_ms=50)
-    await publicar(canal, FILA_HOLDS_ATRASO, Evento(id=7))
+    await declarar_topologia(canal)
+    await publicar(canal, FILA_HOLDS_ATRASO, Evento(id=7), expiracao=EXPIRACAO_CURTA)
     mensagem = await _receber(canal, FILA_HOLDS_EXPIRAR)
     await mensagem.ack()
     assert Evento.model_validate_json(mensagem.body).id == 7
@@ -139,12 +101,25 @@ async def test_hold_vencido_chega_em_holds_expirar(canal: AbstractChannel) -> No
 async def test_mensagem_rejeitada_cai_na_dlq(
     canal: AbstractChannel, routing_key: str, fila: str
 ) -> None:
-    await declarar_topologia(canal, ttl_hold_ms=50)
-    await publicar(canal, routing_key, Evento(id=9))
+    await declarar_topologia(canal)
+    expiracao = EXPIRACAO_CURTA if routing_key == FILA_HOLDS_ATRASO else None
+    await publicar(canal, routing_key, Evento(id=9), expiracao=expiracao)
     await (await _receber(canal, fila)).reject(requeue=False)
     mensagem = await _receber(canal, f"{fila}.dlq")
     await mensagem.ack()
     assert Evento.model_validate_json(mensagem.body).id == 9
+
+
+async def test_holds_com_duracoes_diferentes_expiram_sem_recriar_a_fila(
+    canal: AbstractChannel,
+) -> None:
+    await declarar_topologia(canal)
+    await publicar(canal, FILA_HOLDS_ATRASO, Evento(id=1), expiracao=EXPIRACAO_CURTA)
+    await publicar(canal, FILA_HOLDS_ATRASO, Evento(id=2), expiracao=2 * EXPIRACAO_CURTA)
+    for esperado in (1, 2):
+        mensagem = await _receber(canal, FILA_HOLDS_EXPIRAR)
+        await mensagem.ack()
+        assert Evento.model_validate_json(mensagem.body).id == esperado
 
 
 async def test_publicar_sem_destino_da_erro(canal: AbstractChannel) -> None:
@@ -180,13 +155,13 @@ async def test_cada_instancia_do_painel_recebe_o_evento(canal: AbstractChannel, 
 
 
 async def test_fila_do_painel_e_exclusiva_e_some_com_a_conexao(
-    canal: AbstractChannel, vhost: str
+    canal: AbstractChannel, consultar_filas: ConsultarFilas
 ) -> None:
     await declarar_topologia(canal)
     conexao_painel = await conectar(ConfigRabbit())
     fila = await declarar_fila_painel(await abrir_canal(conexao_painel))
 
-    info = (await _filas(vhost))[fila.name]
+    info = (await consultar_filas())[fila.name]
     assert info["exclusive"] is True
     assert info["auto_delete"] is True
     assert info["durable"] is False
@@ -195,6 +170,6 @@ async def test_fila_do_painel_e_exclusiva_e_some_com_a_conexao(
     await conexao_painel.close()
     async with asyncio.timeout(5):
         while True:
-            if fila.name not in await _filas(vhost):
+            if fila.name not in await consultar_filas():
                 return
             await asyncio.sleep(0.05)

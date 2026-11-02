@@ -12,7 +12,7 @@ IMAGENS = {
     "rabbitmq": "rabbitmq:3-management",
     "redis": "redis:7",
 }
-CONSTRUIDOS = ["api"]
+CONSTRUIDOS = ["api", "worker"]
 PORTAS = {
     "postgres": {("127.0.0.1", "5432")},
     "rabbitmq": {("127.0.0.1", "5672"), ("127.0.0.1", "15672")},
@@ -67,6 +67,21 @@ def test_api_publicada_so_em_loopback(configuracao: dict[str, Any]) -> None:
 def test_api_depende_de_postgres_e_rabbitmq_saudaveis(configuracao: dict[str, Any]) -> None:
     dependencias = configuracao["api"]["depends_on"]
     assert {nome: d["condition"] for nome, d in dependencias.items()} == {
+        "postgres": "service_healthy",
+        "rabbitmq": "service_healthy",
+    }
+
+
+def test_worker_nao_publica_portas(configuracao: dict[str, Any]) -> None:
+    assert "ports" not in configuracao["worker"]
+
+
+def test_worker_depende_de_api_postgres_e_rabbitmq_saudaveis(
+    configuracao: dict[str, Any],
+) -> None:
+    dependencias = configuracao["worker"]["depends_on"]
+    assert {nome: d["condition"] for nome, d in dependencias.items()} == {
+        "api": "service_healthy",
         "postgres": "service_healthy",
         "rabbitmq": "service_healthy",
     }

@@ -54,9 +54,28 @@ class Cenario:
         return {"X-Clinica-Id": str(self.clinica_id)}
 
 
+class PublicadorFalso:
+    def __init__(self) -> None:
+        self.holds: list[tuple[UUID, timedelta]] = []
+
+    async def abrir(self) -> None:
+        pass
+
+    async def fechar(self) -> None:
+        pass
+
+    async def hold_criado(self, hold_id: UUID, duracao: timedelta) -> None:
+        self.holds.append((hold_id, duracao))
+
+
 @pytest.fixture
-async def app(banco: str) -> AsyncIterator[FastAPI]:
-    app = criar_app(ConfigPostgres(db=banco), ConfigAgenda(antecedencia_minima_min=0))
+def publicador() -> PublicadorFalso:
+    return PublicadorFalso()
+
+
+@pytest.fixture
+async def app(banco: str, publicador: PublicadorFalso) -> AsyncIterator[FastAPI]:
+    app = criar_app(ConfigPostgres(db=banco), ConfigAgenda(antecedencia_minima_min=0), publicador)
     yield app
     await app.state.engine.dispose()
 
@@ -490,7 +509,7 @@ async def test_hold_vencido_de_outro_dentista_no_consultorio_e_expirado_ao_segur
             periodo=Range(c.h(9), c.h(9, 30)),
             status="segurado",
             expira_em=func.now() - timedelta(seconds=1),
-            origem="voz",
+            origem="painel",
         )
         sessao.add(vencido)
         await sessao.commit()
@@ -539,6 +558,82 @@ async def test_segurar_recusa_data_sem_fuso(cliente: httpx.AsyncClient, c: Cenar
         },
     )
     assert resposta.status_code == 422
+
+
+# ---- Publicação na fila de atraso
+
+
+async def test_hold_novo_publica_uma_vez_com_a_duracao(
+    cliente: httpx.AsyncClient, c: Cenario, publicador: PublicadorFalso
+) -> None:
+    hold_id = await _hold(cliente, c, c.painel)
+    assert publicador.holds == [(UUID(hold_id), timedelta(minutes=3))]
+
+
+async def test_duracao_publicada_vem_da_configuracao(banco: str, c: Cenario) -> None:
+    publicador = PublicadorFalso()
+    app = criar_app(
+        ConfigPostgres(db=banco),
+        ConfigAgenda(antecedencia_minima_min=0, duracao_hold_min=5),
+        publicador,
+    )
+    transporte = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transporte, base_url="http://api") as cliente:
+        await _hold(cliente, c, c.painel)
+    await app.state.engine.dispose()
+    assert [duracao for _, duracao in publicador.holds] == [timedelta(minutes=5)]
+
+
+async def test_retry_com_resposta_guardada_nao_publica_de_novo(
+    cliente: httpx.AsyncClient, c: Cenario, publicador: PublicadorFalso
+) -> None:
+    await _segurar(cliente, c, c.painel, chave="k")
+    await _segurar(cliente, c, c.painel, chave="k")
+    assert len(publicador.holds) == 1
+
+
+async def test_retry_de_hold_vencido_publica_o_hold_novo(
+    cliente: httpx.AsyncClient, c: Cenario, fabrica: Fabrica, publicador: PublicadorFalso
+) -> None:
+    primeira = await _segurar(cliente, c, c.painel, chave="k")
+    await _vencer(fabrica, primeira.json()["hold_id"])
+    segunda = await _segurar(cliente, c, c.painel, chave="k")
+    assert [str(h) for h, _ in publicador.holds] == [
+        primeira.json()["hold_id"],
+        segunda.json()["hold_id"],
+    ]
+
+
+@pytest.mark.parametrize("inicio", [(9, 7), (9, 0)])
+async def test_falha_ao_segurar_nao_publica(
+    cliente: httpx.AsyncClient,
+    c: Cenario,
+    publicador: PublicadorFalso,
+    inicio: tuple[int, int],
+) -> None:
+    await _hold(cliente, c, c.painel)
+    publicador.holds.clear()
+    resposta = await _segurar(cliente, c, c.painel, c.h(*inicio))
+    assert resposta.status_code == 409
+    assert publicador.holds == []
+
+
+async def test_mensagem_so_e_publicada_depois_do_commit(
+    banco: str, c: Cenario, fabrica: Fabrica
+) -> None:
+    class Observador(PublicadorFalso):
+        status: str | None = None
+
+        async def hold_criado(self, hold_id: UUID, duracao: timedelta) -> None:
+            self.status = (await _ler(fabrica, str(hold_id))).status
+
+    observador = Observador()
+    app = criar_app(ConfigPostgres(db=banco), ConfigAgenda(antecedencia_minima_min=0), observador)
+    transporte = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transporte, base_url="http://api") as cliente:
+        await _hold(cliente, c, c.painel)
+    await app.state.engine.dispose()
+    assert observador.status == "segurado"
 
 
 # ---- Confirmar: quem pode confirmar o quê
@@ -596,9 +691,11 @@ async def test_painel_nao_confirma_hold_de_ligacao(
     assert (await _ler(fabrica, hold_id)).status == "segurado"
 
 
-async def test_painel_nao_confirma_hold_de_voz_sem_chamada(
+async def test_ligacao_nao_confirma_hold_do_painel_com_a_chamada_dela(
     cliente: httpx.AsyncClient, c: Cenario, fabrica: Fabrica
 ) -> None:
+    # O CHECK só vale num sentido: o banco aceita hold do painel com chamada_id.
+    cabecalhos = await _chamada(fabrica, c, c.paciente_id)
     async with fabrica() as sessao:
         hold = Agendamento(
             clinica_id=c.clinica_id,
@@ -608,11 +705,12 @@ async def test_painel_nao_confirma_hold_de_voz_sem_chamada(
             periodo=Range(c.h(9), c.h(9, 30)),
             status="segurado",
             expira_em=func.now() + timedelta(minutes=3),
-            origem="voz",
+            chamada_id=UUID(cabecalhos["X-Chamada-Id"]),
+            origem="painel",
         )
         sessao.add(hold)
         await sessao.commit()
-    resposta = await _confirmar(cliente, str(hold.id), c.painel, c.paciente_id)
+    resposta = await _confirmar(cliente, str(hold.id), cabecalhos)
     assert resposta.status_code == 409
     assert resposta.json()["motivo"] == "hold_perdido"
 

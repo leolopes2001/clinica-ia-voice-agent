@@ -1,4 +1,5 @@
-from uuid import uuid4
+from datetime import timedelta
+from uuid import UUID, uuid4
 
 import aio_pika
 from aio_pika.abc import (
@@ -21,7 +22,10 @@ FILA_CHAMADA_ENCERRADA = "chamada.encerrada"
 FILA_MANUTENCAO_DIARIA = "manutencao.diaria"
 
 PADRAO_AGENDAMENTO = "agendamento.*"
-TTL_HOLD_MS = 180_000
+
+
+class HoldSegurado(BaseModel):
+    hold_id: UUID
 
 
 async def conectar(config: ConfigRabbit) -> AbstractRobustConnection:
@@ -38,18 +42,18 @@ async def _declarar_dlq(canal: AbstractChannel, dlx: AbstractExchange, fila: str
     await dlq.bind(dlx, routing_key=dlq.name)
 
 
-async def declarar_topologia(canal: AbstractChannel, ttl_hold_ms: int = TTL_HOLD_MS) -> None:
+async def declarar_topologia(canal: AbstractChannel) -> None:
     eventos = await canal.declare_exchange(
         EXCHANGE_EVENTOS, aio_pika.ExchangeType.TOPIC, durable=True
     )
     dlx = await canal.declare_exchange(EXCHANGE_DLX, aio_pika.ExchangeType.DIRECT, durable=True)
 
-    # Ao vencer o TTL, a mensagem de holds.atraso cai em holds.expirar pelo DLX.
+    # Ao vencer a expiração da mensagem, ela cai de holds.atraso em holds.expirar pelo DLX.
+    # Como todos os holds têm a mesma duração, a ordem FIFO garante que expirem na ordem certa.
     atraso = await canal.declare_queue(
         FILA_HOLDS_ATRASO,
         durable=True,
         arguments={
-            "x-message-ttl": ttl_hold_ms,
             "x-dead-letter-exchange": EXCHANGE_DLX,
             "x-dead-letter-routing-key": FILA_HOLDS_EXPIRAR,
         },
@@ -90,13 +94,19 @@ async def declarar_fila_painel(canal: AbstractChannel) -> AbstractQueue:
     return fila
 
 
-async def publicar(canal: AbstractChannel, routing_key: str, corpo: BaseModel) -> None:
+async def publicar(
+    canal: AbstractChannel,
+    routing_key: str,
+    corpo: BaseModel,
+    expiracao: timedelta | None = None,
+) -> None:
     eventos = await canal.get_exchange(EXCHANGE_EVENTOS, ensure=False)
     await eventos.publish(
         aio_pika.Message(
             corpo.model_dump_json().encode(),
             content_type="application/json",
             delivery_mode=aio_pika.DeliveryMode.PERSISTENT,
+            expiration=expiracao,
         ),
         routing_key=routing_key,
         # Sem painel no ar, agendamento.* não tem fila, e isso não é erro.

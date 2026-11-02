@@ -203,6 +203,7 @@ CREATE TABLE agendamentos (
 
   CONSTRAINT segurado_exige_expiracao CHECK (status <> 'segurado' OR expira_em IS NOT NULL),
   CONSTRAINT confirmado_exige_paciente CHECK (status <> 'confirmado' OR paciente_id IS NOT NULL),
+  CONSTRAINT voz_exige_chamada CHECK (origem <> 'voz' OR chamada_id IS NOT NULL),
   CONSTRAINT sem_conflito_dentista EXCLUDE USING gist
     (dentista_id WITH =, periodo WITH &&)
     WHERE (status IN ('segurado','confirmado')),
@@ -216,7 +217,7 @@ Regras de cada operação:
 
 - **Segurar:** primeiro valida o que a constraint não conhece (grade, bloqueios, habilitação e antecedência); um horário inválido vira `{ok: false, motivo: "indisponivel", alternativas: [...]}`. Depois, numa transação, toma os locks, marca como `expirado` os holds vencidos daquele dentista ou daquele consultório (`status='segurado' AND expira_em < now()`), porque os dois entram nas exclusion constraints, e insere com `status='segurado'` e `expira_em = now() + duração do hold`. Erro `23P01` (exclusion violation) vira a resposta `{ok: false, motivo: "ocupado", alternativas: [...]}`. As alternativas são todos os candidatos do mesmo dentista, do dia pedido até 7 dias depois; a escolha das 3 opções fica na T2.1.
 - **Locks:** segurar, confirmar e remarcar tomam `pg_advisory_xact_lock` por dentista e por consultório, sempre em ordem fixa. Inserções simultâneas no mesmo horário podem dar deadlock (`40P01`) na exclusion constraint, em vez de `23P01`: numa medição com 50 conexões, isso ocorreu em 9 de 60 rodadas sem lock e em nenhuma de 100 com lock. Os locks só evitam esse deadlock: quem garante que não há duplicidade continua sendo a constraint.
-- **Expirar:** cada hold publica uma mensagem com TTL de 180 s numa fila de atraso. Quando ela vence, cai via dead-letter na fila `holds.expirar`, e o worker marca `expirado` se o hold ainda estiver segurado. A limpeza do passo anterior cobre o caso de o worker atrasar.
+- **Expirar:** depois do commit, cada hold novo publica na fila de atraso uma mensagem com `expiration` igual à duração do hold (`AGENDA_DURACAO_HOLD_MIN`). Como todos os holds têm a mesma duração, a ordem FIFO garante que expirem na ordem certa, e a duração muda sem recriar a fila; ao mudá-la, as mensagens já na fila ainda seguram as seguintes até vencerem. Quando ela vence, cai via dead-letter na fila `holds.expirar`, e o worker marca `expirado` se o hold ainda estiver segurado e vencido. Mensagem inválida ou erro ao processar vai para `holds.expirar.dlq`, sem voltar à fila. A publicação não bloqueia o agendamento: tem limite de 2 s e, se falhar, só gera um log de aviso, porque o horário é liberado de qualquer forma quando o hold vence. Além disso, a cada 60 s uma varredura do worker marca como `expirado` todos os holds vencidos, o que cobre mensagens perdidas e o caso de o worker atrasar, junto com a limpeza feita ao segurar.
 - **Confirmar:** `UPDATE ... SET status='confirmado', paciente_id=:paciente, expira_em=NULL WHERE id=:hold AND clinica_id=:clinica AND status='segurado' AND expira_em > now() AND origem=:origem AND chamada_id IS NOT DISTINCT FROM :chamada`. Assim, cada ligação só confirma os próprios holds, e o painel só confirma holds do painel. Se nenhuma linha mudar, o hold foi perdido e o agente oferece novas opções. Na ligação, o paciente vem de `chamadas.paciente_id` e nunca do corpo da requisição; no painel, vem do corpo e precisa ser da mesma clínica.
 - **Remarcar:** o novo horário já está segurado. Numa única transação, confirma o novo e cancela o antigo. Só vale para consultas `confirmado` que ainda não começaram; na ligação, exige identidade verificada e consulta do paciente selecionado. **Limitação conhecida do MVP:** não dá para remarcar para um horário que se sobrepõe à própria consulta (de 14h–15h para 14h30), porque o novo hold colide com a consulta antiga e a resposta é `ocupado`.
 - **Cancelar:** tem as mesmas condições de remarcar e é sempre permitido, mesmo fora do prazo da política. A resposta informa `dentro_do_prazo` e `politica_cancelamento_horas`.
@@ -300,7 +301,7 @@ Há um exchange `clinica.eventos` do tipo topic, mais o `clinica.dlx` (direct) p
 | Routing key / fila | Produtor | Consumidor | Para quê |
 | --- | --- | --- | --- |
 | `agendamento.*` (criado, confirmado, remarcado, cancelado, expirado) → fila exclusiva e auto-delete, declarada por cada processo do painel ao subir | API | Painel (SSE) | Atualizar a agenda ao vivo. Sem painel no ar, os eventos são descartados; com várias instâncias, todas recebem |
-| `holds.atraso` (TTL 180 s) → DLX → `holds.expirar` | API | Worker | Liberar holds vencidos |
+| `holds.atraso` (expiração por mensagem) → DLX → `holds.expirar` | API | Worker | Liberar holds vencidos. Uma varredura do worker a cada 60 s, fora do broker, cobre mensagens perdidas |
 | `conhecimento.indexar` | Painel | Worker | Extrair, fatiar, gerar embeddings e gravar |
 | `chamada.encerrada` | Agente | Worker | Gravar transcrição, desfecho e métricas |
 | `manutencao.diaria` | Agendador do worker | Worker | Retenção LGPD e limpeza de idempotência |
@@ -372,9 +373,9 @@ São 7 fases, cada uma terminando em algo que roda e pode ser testado. As fases 
 - [x] T1.1 Migrations Alembic de todas as tabelas, com `btree_gist`, `pgvector`, `unaccent` e as duas exclusion constraints.
 - [x] T1.2 Cálculo de horários livres (grade − bloqueios − agendamentos), com testes de borda: almoço, feriado, procedimento que não cabe no fim do turno.
 - [x] T1.3 Endpoints segurar, confirmar, remarcar e cancelar, com idempotência e tradução do erro `23P01`, a rota HTTP de listar horários livres e o serviço `api` no Compose.
-- [ ] T1.4 Fila de atraso + DLX para expiração de holds, e o consumidor no worker. Trocar o TTL da fila `holds.atraso` por expiração por mensagem (`expiration`), com a duração vinda das settings (`AGENDA_DURACAO_HOLD_MIN`): como todos os holds têm a mesma duração, a ordem FIFO garante que expirem na ordem certa, e a duração muda sem recriar a fila. Ao concluir, atualizar a seção RabbitMQ e a regra de expirar. Incluir uma migration com um CHECK em `agendamentos`: `origem='voz'` exige `chamada_id`.
+- [x] T1.4 Fila de atraso + DLX para expiração de holds, e o consumidor no worker. Trocar o TTL da fila `holds.atraso` por expiração por mensagem (`expiration`), com a duração vinda das settings (`AGENDA_DURACAO_HOLD_MIN`): como todos os holds têm a mesma duração, a ordem FIFO garante que expirem na ordem certa, e a duração muda sem recriar a fila. Ao concluir, atualizar a seção RabbitMQ e a regra de expirar. Incluir uma migration com um CHECK em `agendamentos`: `origem='voz'` exige `chamada_id`.
 - [ ] T1.5 **Teste de concorrência:** 50 tarefas `asyncio` tentando o mesmo horário. *Pronto quando:* exatamente 1 sucesso e 49 respostas `ocupado`, em 100 execuções seguidas.
-- [ ] T1.6 Publicação dos eventos `agendamento.*`.
+- [ ] T1.6 Publicação dos eventos `agendamento.*`. Quando o consumidor de `holds.expirar` ou a varredura do worker expirarem um hold, isso também gera `agendamento.expirado`, para o painel atualizar; nesse caso, o produtor é o worker. *A resolver:* a limpeza de holds vencidos ao segurar também marca `expirado`, na API, e o painel precisa saber disso.
 
 **Fase 2 — Servidores MCP e RAG**
 
@@ -411,7 +412,7 @@ São 7 fases, cada uma terminando em algo que roda e pode ser testado. As fases 
 
 **Fase 6 — Produção local e LGPD**
 
-- [ ] T6.1 Retenção automática de transcrições e texto de consentimento revisado.
+- [ ] T6.1 Retenção automática de transcrições e texto de consentimento revisado. A retenção só pode apagar a transcrição de uma chamada ligada a uma consulta de voz: a FK e o CHECK `voz_exige_chamada` impedem apagar a chamada ou anular `chamada_id`. *A resolver:* o prazo do telefone guardado nessa linha.
 - [ ] T6.2 Backup diário do Postgres (`pg_dump` num volume e cópia externa).
 - [ ] T6.3 Logs estruturados e um painel simples de saúde (serviços, filas, chamadas ativas).
 - [ ] T6.4 Runbook: o que fazer se cair a internet, o gateway ou a API do Gemini.

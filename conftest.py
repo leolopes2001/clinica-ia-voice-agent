@@ -1,7 +1,12 @@
 import asyncio
-from collections.abc import AsyncIterator, Iterator
+import base64
+import json
+import urllib.error
+import urllib.request
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
 from contextlib import contextmanager
 from pathlib import Path
+from typing import Any
 from uuid import uuid4
 
 import pytest
@@ -10,10 +15,10 @@ from alembic.config import Config
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from clinica_core.config import ConfigPostgres
+from clinica_core.config import ConfigPostgres, ConfigRabbit
 from clinica_core.db import criar_engine
 
-ALEMBIC_INI = Path(__file__).resolve().parent.parent / "alembic.ini"
+ALEMBIC_INI = Path(__file__).resolve().parent / "services" / "api" / "alembic.ini"
 
 
 async def _ddl(*comandos: str) -> None:
@@ -70,3 +75,47 @@ async def sessao(banco: str) -> AsyncIterator[AsyncSession]:
             yield sessao
         await transacao.rollback()
     await engine.dispose()
+
+
+def _gerencia(metodo: str, caminho: str, corpo: dict[str, str] | None = None) -> Any:
+    config = ConfigRabbit()
+    credenciais = f"{config.user}:{config.password.get_secret_value()}".encode()
+    pedido = urllib.request.Request(
+        f"http://{config.host}:15672/api/{caminho}",
+        method=metodo,
+        data=json.dumps(corpo).encode() if corpo is not None else None,
+        headers={
+            "Authorization": f"Basic {base64.b64encode(credenciais).decode()}",
+            "Content-Type": "application/json",
+        },
+    )
+    with urllib.request.urlopen(pedido, timeout=5) as resposta:
+        conteudo = resposta.read()
+    return json.loads(conteudo) if conteudo else None
+
+
+@pytest.fixture
+def vhost(monkeypatch: pytest.MonkeyPatch) -> Iterator[str]:
+    nome = f"teste_{uuid4().hex}"
+    usuario = ConfigRabbit().user
+    try:
+        _gerencia("PUT", f"vhosts/{nome}", {})
+    except (urllib.error.URLError, OSError):
+        pytest.skip("rabbitmq indisponível: rode `docker compose up -d --wait`")
+    _gerencia(
+        "PUT",
+        f"permissions/{nome}/{usuario}",
+        {"configure": ".*", "write": ".*", "read": ".*"},
+    )
+    monkeypatch.setenv("RABBITMQ_VHOST", nome)
+    yield nome
+    _gerencia("DELETE", f"vhosts/{nome}")
+
+
+@pytest.fixture
+def consultar_filas(vhost: str) -> Callable[[], Awaitable[dict[str, Any]]]:
+    async def consultar() -> dict[str, Any]:
+        filas = await asyncio.to_thread(_gerencia, "GET", f"queues/{vhost}")
+        return {fila["name"]: fila for fila in filas}
+
+    return consultar

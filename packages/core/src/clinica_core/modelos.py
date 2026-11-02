@@ -190,6 +190,7 @@ class Agendamento(Base):
         CheckConstraint(
             "status <> 'confirmado' OR paciente_id IS NOT NULL", name="confirmado_exige_paciente"
         ),
+        CheckConstraint("origem <> 'voz' OR chamada_id IS NOT NULL", name="voz_exige_chamada"),
         ExcludeConstraint(
             ("dentista_id", "="),
             ("periodo", "&&"),

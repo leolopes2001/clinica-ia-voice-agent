@@ -58,6 +58,9 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-clinica}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-clinica}
       POSTGRES_DB: ${POSTGRES_DB:-clinica}
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_USER: ${RABBITMQ_USER:-clinica}
+      RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:-clinica}
       AGENDA_ANTECEDENCIA_MINIMA_MIN: ${AGENDA_ANTECEDENCIA_MINIMA_MIN:-120}
       AGENDA_DURACAO_HOLD_MIN: ${AGENDA_DURACAO_HOLD_MIN:-3}
     ports:
@@ -74,6 +77,34 @@ services:
         - python
         - -c
         - import urllib.request; urllib.request.urlopen('http://localhost:8000/saude')
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+
+  worker:
+    build:
+      context: .
+      dockerfile: services/worker/Dockerfile
+    restart: unless-stopped
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_USER: ${POSTGRES_USER:-clinica}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-clinica}
+      POSTGRES_DB: ${POSTGRES_DB:-clinica}
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_USER: ${RABBITMQ_USER:-clinica}
+      RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:-clinica}
+    depends_on:
+      # As tabelas vêm das migrations, aplicadas pela API ao subir.
+      api:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-m", "clinica_worker.saude"]
       interval: 5s
       timeout: 5s
       retries: 10
