@@ -344,7 +344,7 @@ clinica-voz/
 ├── .env.example
 ├── docs/                 # spec.md (este documento)
 ├── infra/                # livekit.yaml, sip.yaml
-├── scripts/              # bootstrap_sip.sh, seed.py, teste_concorrencia.py
+├── scripts/              # bootstrap_sip.sh, seed.py
 ├── packages/
 │   └── core/             # modelos, schemas Pydantic, cliente RabbitMQ, config
 └── services/
@@ -390,7 +390,7 @@ São 7 fases, cada uma terminando em algo que roda e pode ser testado. As fases 
 - [ ] T3.1 Subir `livekit` local e o agente com `LiveKitRunner`, `McpToolset` x2 e `LiveKitToolset`.
 - [ ] T3.2 Prompt do sistema em `agent/prompts/`: persona, consentimento, regra de confirmação, limites clínicos, como falar datas e horários.
 - [ ] T3.3 `DatabaseSessionService` no Postgres, com usuário e schema próprios para as sessões do ADK.
-- [ ] T3.4 Testar pelo navegador com o LiveKit Agents Playground ou o `agent-starter-react` (só para teste interno). *Pronto quando:* agendar, remarcar e cancelar funcionam por voz.
+- [ ] T3.4 Testar pelo navegador com o LiveKit Agents Playground ou o `agent-starter-react` (só para teste interno). Criar o `scripts/seed.py`, com dados fictícios de exemplo para o teste por voz: clínica, 2 dentistas, procedimentos com sinônimos, grade semanal, um bloqueio de almoço e alguns pacientes com telefones fictícios. Telefones reais ficam só no `.env`, nunca no seed. *Pronto quando:* agendar, remarcar e cancelar funcionam por voz.
 - [ ] T3.5 Medir latência (meta: mediana ≤ 1,5 s).
 
 **Fase 4 — Telefonia pelo chip**
