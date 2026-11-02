@@ -4,8 +4,9 @@
 
 Com --interromper-apos N, fala por cima da abertura depois de N segundos (barge-in).
 
-A latência vai do fim da fala do paciente até o primeiro som do agente. Turnos que chamam
-ferramentas ficam mais lentos, e isso também é tempo de espera real na ligação.
+A latência vai do fim da fala do paciente até o primeiro som do agente. Em turnos com ferramenta,
+esse som pode ser só a frase de espera, então "até a resposta" mede também o primeiro som depois
+do resultado da ferramenta, depois de uma pausa. Essa é a espera real pela informação.
 """
 
 import argparse
@@ -29,6 +30,8 @@ TAXA = 16000
 AMOSTRAS_POR_QUADRO = TAXA // 50
 LIMIAR_DE_SOM = 300
 SILENCIO_DE_FIM_DE_TURNO_S = 2.0
+# Pausa que separa a frase de espera do começo da resposta, se ela ainda tocava ao vir o resultado.
+PAUSA_ENTRE_FALAS_S = 0.2
 ESPERA_MAXIMA_S = 45.0
 
 
@@ -40,6 +43,8 @@ class Estado:
     duracao_da_resposta: float = 0.0
     latencias: list[float] = field(default_factory=list)
     com_ferramenta: list[float] = field(default_factory=list)
+    ate_a_resposta: list[float] = field(default_factory=list)
+    resultado_em: float | None = None
     sem_ferramenta: list[float] = field(default_factory=list)
     chamou_ferramenta: bool = False
     pedidas: dict[str, float] = field(default_factory=dict)
@@ -74,7 +79,15 @@ async def _ouvir(faixa: rtc.Track, estado: Estado) -> None:
         amostras = np.frombuffer(bytes(evento.frame.data), dtype=np.int16)
         if amostras.size and np.sqrt(np.mean(amostras.astype(np.float64) ** 2)) > LIMIAR_DE_SOM:
             agora = time.monotonic()
+            pausa = agora - estado.ultimo_som
             estado.ultimo_som = agora
+            if (
+                estado.resultado_em is not None
+                and estado.fim_da_fala is not None
+                and pausa > PAUSA_ENTRE_FALAS_S
+            ):
+                estado.ate_a_resposta.append(agora - estado.fim_da_fala)
+                estado.resultado_em = None
             if estado.primeiro_som_depois_da_fala is not None:
                 estado.duracao_da_resposta = agora - estado.primeiro_som_depois_da_fala
             if estado.fim_da_fala is not None and estado.primeiro_som_depois_da_fala is None:
@@ -148,6 +161,7 @@ async def conversar(telefone: str, falas: list[str], voz: str, interromper_apos:
             estado.pedidas[mensagem["id"]] = time.monotonic()
             print(f"    -> {mensagem['name']}({json.dumps(mensagem['args'], ensure_ascii=False)})")
         else:
+            estado.resultado_em = time.monotonic()
             pedida = estado.pedidas.pop(mensagem["id"], None)
             if pedida is not None:
                 estado.duracao_por_ferramenta.setdefault(mensagem["name"], []).append(
@@ -226,7 +240,8 @@ def _principal() -> None:
     # A abertura fica de fora: ela não vem depois de uma fala do paciente.
     print(_resumo("todos os turnos", estado.latencias[1:]))
     print(_resumo("sem ferramenta", estado.sem_ferramenta[1:]))
-    print(_resumo("com ferramenta", estado.com_ferramenta))
+    print(_resumo("com ferramenta, primeiro som", estado.com_ferramenta))
+    print(_resumo("com ferramenta, até a resposta", estado.ate_a_resposta))
     for nome, duracoes in estado.duracao_por_ferramenta.items():
         print(_resumo(f"ferramenta {nome}", duracoes))
 
