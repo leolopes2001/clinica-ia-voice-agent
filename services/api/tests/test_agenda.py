@@ -10,7 +10,7 @@ from zoneinfo import ZoneInfo
 import httpx
 import pytest
 from fastapi import FastAPI
-from sqlalchemy import func, select, update
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.dialects.postgresql import Range
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
@@ -1145,6 +1145,16 @@ async def _em_paralelo(*tarefas: Any) -> list[httpx.Response]:
     return list(await asyncio.gather(*tarefas))
 
 
+def _conferir_alternativas(falhas: list[dict[str, Any]], inicio: datetime, fim: datetime) -> None:
+    for falha in falhas:
+        assert falha["alternativas"]
+        for alternativa in falha["alternativas"]:
+            # Compara instantes: a API devolve os horários em UTC.
+            assert datetime.fromisoformat(alternativa["fim_periodo"]) <= inicio or (
+                datetime.fromisoformat(alternativa["inicio"]) >= fim
+            )
+
+
 async def test_50_ligacoes_no_mesmo_horario(
     cliente: httpx.AsyncClient, c: Cenario, fabrica: Fabrica
 ) -> None:
@@ -1152,8 +1162,7 @@ async def test_50_ligacoes_no_mesmo_horario(
     respostas = await _em_paralelo(*(_segurar(cliente, c, cab) for cab in chamadas))
     assert _motivos(respostas) == {"ok": 1, "ocupado": 49}
     perdedoras = [r.json() for r in respostas if r.status_code == 409]
-    assert all(p["alternativas"] for p in perdedoras)
-    assert all(c.h(9).isoformat() not in str(p["alternativas"]) for p in perdedoras)
+    _conferir_alternativas(perdedoras, c.h(9), c.h(9, 30))
 
 
 async def test_painel_concorre_com_ligacoes_sob_a_mesma_regra(
@@ -1193,22 +1202,54 @@ async def test_confirmar_enquanto_outros_tentam_segurar(
     assert _motivos(tentativas) == {"ocupado": 20}
 
 
-async def test_50_conexoes_reais_nao_dao_deadlock(banco: str, c: Cenario, fabrica: Fabrica) -> None:
+async def _conferir_rodada(
+    respostas: list[httpx.Response],
+    c: Cenario,
+    fabrica: Fabrica,
+    publicador: PublicadorFalso,
+) -> None:
+    assert _motivos(respostas) == {"ok": 1, "ocupado": 49}
+    vencedor = next(r.json() for r in respostas if r.status_code == 201)
+    hold_id = UUID(vencedor["hold_id"])
+    assert [hold for hold, _ in publicador.holds] == [hold_id]
+    _conferir_alternativas(
+        [r.json() for r in respostas if r.status_code == 409], c.h(9), c.h(9, 30)
+    )
+    async with fabrica() as sessao:
+        linhas = await sessao.execute(
+            select(Agendamento.id, Agendamento.status).where(Agendamento.clinica_id == c.clinica_id)
+        )
+        assert [tuple(linha) for linha in linhas] == [(hold_id, "segurado")]
+
+
+async def test_t1_5_50_tarefas_no_mesmo_horario_100_vezes(
+    banco: str,
+    app: FastAPI,
+    cliente: httpx.AsyncClient,
+    c: Cenario,
+    fabrica: Fabrica,
+    publicador: PublicadorFalso,
+) -> None:
+    chamadas = [await _chamada(fabrica, c) for _ in range(50)]
     # O pool padrão limita a disputa a 15 conexões; aqui são 50 de verdade.
-    app = criar_app(ConfigPostgres(db=banco), ConfigAgenda(antecedencia_minima_min=0))
     engine = create_async_engine(ConfigPostgres(db=banco).url, pool_size=50)
     app.state.fabrica_sessoes = criar_fabrica_sessoes(engine)
-    transporte = httpx.ASGITransport(app=app)
     try:
-        async with httpx.AsyncClient(transport=transporte, base_url="http://api") as cliente:
-            for hora in (8, 9, 10, 11):
-                respostas = await _em_paralelo(
-                    *(_segurar(cliente, c, c.painel, c.h(hora)) for _ in range(50))
+        for rodada in range(1, 101):
+            try:
+                respostas = await _em_paralelo(*(_segurar(cliente, c, cab) for cab in chamadas))
+                await _conferir_rodada(respostas, c, fabrica, publicador)
+            except Exception as erro:
+                erro.add_note(f"rodada {rodada} de 100")
+                raise
+            publicador.holds.clear()
+            async with fabrica() as sessao:
+                await sessao.execute(
+                    delete(Agendamento).where(Agendamento.clinica_id == c.clinica_id)
                 )
-                assert _motivos(respostas) == {"ok": 1, "ocupado": 49}
+                await sessao.commit()
     finally:
         await engine.dispose()
-        await app.state.engine.dispose()
 
 
 async def _espera_o_lock(
