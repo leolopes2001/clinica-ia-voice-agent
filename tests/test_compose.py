@@ -103,8 +103,10 @@ def test_painel_na_8080_so_em_loopback_por_padrao(configuracao: dict[str, Any]) 
 def test_painel_recebe_o_volume_da_base_e_nao_o_banco(configuracao: dict[str, Any]) -> None:
     painel = configuracao["painel"]
     assert [(v["source"], v["target"]) for v in painel["volumes"]] == [
-        ("conhecimento_arquivos", "/dados/conhecimento")
+        ("conhecimento_arquivos", "/dados/conhecimento"),
+        ("backups", "/backups"),
     ]
+    assert painel["volumes"][1]["read_only"] is True
     assert not [nome for nome in painel["environment"] if nome.startswith("POSTGRES_")]
     assert "postgres" not in painel["depends_on"]
 

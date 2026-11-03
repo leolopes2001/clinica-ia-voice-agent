@@ -3,6 +3,7 @@ import uvicorn
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from clinica_core.config import ConfigTokens
+from clinica_core.logs import configurar_logs
 from clinica_mcp_clinica.servidor import criar_app
 
 
@@ -14,11 +15,12 @@ class ConfigMcpClinica(BaseSettings):
 
 
 def main() -> None:
+    configurar_logs("mcp-clinica")
     config = ConfigMcpClinica()
     api = httpx.AsyncClient(
         base_url=config.api_url, timeout=5.0, headers=ConfigTokens().cabecalho_servicos
     )
-    uvicorn.run(criar_app(api), host="0.0.0.0", port=config.porta)
+    uvicorn.run(criar_app(api), host="0.0.0.0", port=config.porta, log_config=None)
 
 
 if __name__ == "__main__":

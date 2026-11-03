@@ -64,6 +64,7 @@ from clinica_core.config import (
     ConfigTokens,
 )
 from clinica_core.db import criar_engine, criar_fabrica_sessoes
+from clinica_core.logs import configurar_logs
 
 _STATUS_POR_MOTIVO = {
     "contexto_ausente": HTTPStatus.BAD_REQUEST,
@@ -356,3 +357,8 @@ def criar_app(
         return await voz.listar_meus_agendamentos(sessao, contexto)
 
     return app
+
+
+def criar_app_de_producao() -> FastAPI:
+    configurar_logs("api")
+    return criar_app()

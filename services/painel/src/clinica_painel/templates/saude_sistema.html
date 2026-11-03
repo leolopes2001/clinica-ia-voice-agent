@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% block titulo %}Saúde do sistema{% endblock %}
+{% block conteudo %}
+<div hx-get="/saude-do-sistema" hx-trigger="every 30s" hx-target="main" hx-select="main" hx-swap="outerHTML">
+<h1>Saúde do sistema</h1>
+{% for a in alertas %}<p class="alerta" role="status">{{ a }}</p>{% else %}<p class="aviso" role="status">Tudo em ordem.</p>{% endfor %}
+<p class="discreto">Esta tela não testa o Gemini, porque isso gastaria crédito. Se a ligação cair sem falar nada, veja o runbook.</p>
+<div class="duas-colunas">
+  <section>
+    <h2>Filas</h2>
+    <div class="rolagem"><table>
+      <thead><tr><th>Fila</th><th>Mensagens</th><th>Consumidores</th></tr></thead>
+      <tbody>
+      {% for f in filas or [] %}
+        <tr><td>{{ f.nome }}</td><td>{{ f.mensagens }}</td><td>{{ f.consumidores }}</td></tr>
+      {% else %}<tr><td colspan="3">Sem dados do RabbitMQ.</td></tr>{% endfor %}
+      </tbody>
+    </table></div>
+  </section>
+  <section>
+    <div class="cartao">
+      <h2>Chamadas ativas</h2>
+      <p><strong>{{ chamadas_ativas }}</strong></p>
+    </div>
+    <div class="cartao separado">
+      <h2>Serviços</h2>
+      {% for s in servicos %}
+      <p>{{ s.nome }}: <span class="selo {{ 'ok' if s.ok else 'falha' }}">{{ 'no ar' if s.ok else 'fora do ar' }}</span></p>
+      {% endfor %}
+    </div>
+    <div class="cartao separado">
+      <h2>Último backup</h2>
+      {% if backup %}
+      <p>{{ backup.quando|data_hora(sessao.fuso) }} <span class="selo {{ 'ok' if backup.situacao == 'ok' else 'falha' }}">{{ backup.situacao }}</span></p>
+      <p class="discreto">Cópia externa: {{ {'ok': 'feita', 'sem_senha': 'desligada', 'falhou': 'falhou', 'nao_tentado': 'não tentada'}.get(backup.externo, backup.externo) }}</p>
+      {% else %}<p class="discreto">Nenhum.</p>{% endif %}
+    </div>
+  </section>
+</div>
+</div>
+{% endblock %}

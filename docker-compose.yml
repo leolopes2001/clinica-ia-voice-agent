@@ -128,7 +128,13 @@ services:
       RABBITMQ_USER: ${RABBITMQ_USER:-clinica}
       RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:-clinica}
       PAINEL_API_URL: http://api:8000
+      PAINEL_MCP_CLINICA_URL: http://mcp-clinica:8000
       PAINEL_MCP_CONHECIMENTO_URL: http://mcp-conhecimento:8000
+      PAINEL_LIVEKIT_URL: http://livekit:7880
+      # O agente fica na rede do contêiner do LiveKit.
+      PAINEL_AGENTE_URL: http://livekit:8081
+      PAINEL_RABBIT_GERENCIA_URL: http://rabbitmq:15672
+      PAINEL_BACKUPS_DIR: /backups
       PAINEL_SEGREDO_SESSAO: ${PAINEL_SEGREDO_SESSAO:-segredo-de-sessao-de-desenvolvimento-troque}
       # Sem HTTPS, o navegador só devolve o cookie seguro em localhost.
       PAINEL_COOKIE_SEGURO: ${PAINEL_COOKIE_SEGURO:-true}
@@ -139,6 +145,8 @@ services:
       - "${PAINEL_BIND:-127.0.0.1}:${PAINEL_PORTA:-8080}:8080"
     volumes:
       - conhecimento_arquivos:/dados/conhecimento
+      # Só para ler o estado do último backup: os dumps têm permissão só para o dono.
+      - backups:/backups:ro
     depends_on:
       api:
         condition: service_healthy

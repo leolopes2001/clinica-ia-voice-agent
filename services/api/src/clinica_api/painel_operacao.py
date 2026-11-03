@@ -1,13 +1,13 @@
 """Base de conhecimento, chamadas, pedidos de retorno e configurações, vistos pelo painel."""
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from http import HTTPStatus
 from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter
 from pydantic import BaseModel, ConfigDict, StringConstraints
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from clinica_api import auditoria
@@ -19,6 +19,7 @@ from clinica_core.modelos import Chamada, ConhecimentoDocumento, PedidoRetorno
 router = APIRouter(prefix="/painel")
 
 MAXIMO_CHAMADAS = 200
+_IDADE_MAXIMA_DE_CHAMADA_ATIVA = timedelta(hours=4)
 MAXIMO_RETORNOS = 200
 _Texto = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=300)]
 
@@ -271,3 +272,18 @@ async def concluir_retorno(id_: UUID, sessao: Sessao, atual: Logado) -> RetornoR
     )
     await sessao.commit()
     return resposta
+
+
+@router.get("/saude")
+async def saude(sessao: Sessao, atual: Admin) -> dict[str, object]:
+    # Uma ligação não dura tanto: o que passou disso é de um agente que caiu antes de encerrar.
+    ativas = await sessao.scalar(
+        select(func.count())
+        .select_from(Chamada)
+        .where(
+            Chamada.clinica_id == atual.clinica_id,
+            Chamada.fim.is_(None),
+            Chamada.inicio > func.now() - _IDADE_MAXIMA_DE_CHAMADA_ATIVA,
+        )
+    )
+    return {"banco": "ok", "chamadas_ativas": ativas}
