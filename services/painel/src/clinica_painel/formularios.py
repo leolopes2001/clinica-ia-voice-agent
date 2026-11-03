@@ -39,6 +39,8 @@ class Cadastro:
     # O contrário: prepara um registro da API para a tabela e o formulário.
     exibir: Callable[[dict[str, Any], Request], dict[str, Any]] = field(default=lambda d, _: d)
     filtro_de_busca: bool = False
+    # A lista vem limitada, e o registro a editar pode não estar nela.
+    le_um_por_vez: bool = False
 
 
 def _converter(campo: Campo, valores: list[str]) -> Any:

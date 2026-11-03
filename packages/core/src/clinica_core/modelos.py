@@ -27,6 +27,7 @@ from sqlalchemy.dialects.postgresql import (
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 DIMENSAO_EMBEDDING = 768
+_PERIODO_DA_GRADE = "tsrange(DATE '2000-01-01' + inicio, DATE '2000-01-01' + fim)"
 _STATUS_ATIVOS = text("status IN ('segurado', 'confirmado')")
 
 
@@ -107,6 +108,20 @@ class GradeTrabalho(Base):
         # 0 = segunda-feira, como em date.weekday().
         CheckConstraint("dia_semana BETWEEN 0 AND 6", name="dia_semana_valido"),
         CheckConstraint("inicio < fim", name="inicio_antes_do_fim"),
+        ExcludeConstraint(
+            ("dentista_id", "="),
+            ("dia_semana", "="),
+            (text(_PERIODO_DA_GRADE), "&&"),
+            name="grade_sem_conflito_dentista",
+            using="gist",
+        ),
+        ExcludeConstraint(
+            ("consultorio_id", "="),
+            ("dia_semana", "="),
+            (text(_PERIODO_DA_GRADE), "&&"),
+            name="grade_sem_conflito_consultorio",
+            using="gist",
+        ),
     )
 
     id: Mapped[UUID] = _id()

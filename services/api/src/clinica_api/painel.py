@@ -396,6 +396,26 @@ async def _gravar_paciente(sessao: AsyncSession) -> None:
         raise ErroAgenda("paciente_duplicado") from erro
 
 
+@router.get("/pacientes/{paciente_id}")
+async def ver_paciente(paciente_id: UUID, sessao: Sessao, atual: Logado) -> PacienteResumo:
+    paciente = await sessao.scalar(
+        select(Paciente).where(Paciente.id == paciente_id, Paciente.clinica_id == atual.clinica_id)
+    )
+    if paciente is None:
+        raise ErroAgenda("registro_nao_encontrado")
+    resposta = PacienteResumo.model_validate(paciente)
+    auditoria.registrar(
+        sessao,
+        atual.clinica_id,
+        atual.id,
+        "ver",
+        "paciente",
+        depois=_sem_dados_do_paciente(paciente),
+    )
+    await sessao.commit()
+    return resposta
+
+
 @router.post("/pacientes", status_code=HTTPStatus.CREATED)
 async def criar_paciente(entrada: PacienteEntrada, sessao: Sessao, atual: Logado) -> PacienteResumo:
     paciente = Paciente(
