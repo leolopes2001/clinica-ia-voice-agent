@@ -16,12 +16,14 @@ from google.genai import types
 from clinica_agent.chamada import (
     ChamadaAberta,
     ClinicaNaoDefinida,
+    ConfiguracaoDaLigacao,
     SemTelefone,
     abrir_chamada,
     telefone_do_chamador,
 )
 from clinica_agent.config import ConfigAgente, ConfigLiveKit
 from clinica_agent.navegador import criar_app as criar_app_navegador
+from clinica_agent.principal import config_de_voz
 from clinica_agent.recepcionista import (
     _esperar_antes,
     _executar_em_serie,
@@ -58,6 +60,17 @@ def test_navegador_nao_finge_ser_sip() -> None:
 def _api(clinicas: list[dict[str, str]], pedidos: list[httpx.Request]) -> httpx.AsyncClient:
     def responder(pedido: httpx.Request) -> httpx.Response:
         pedidos.append(pedido)
+        if pedido.url.path == "/chamadas/configuracao":
+            return httpx.Response(
+                200,
+                json={
+                    "saudacao": "Bom dia",
+                    "voz": "Kore",
+                    "dentro_do_horario": False,
+                    "numero_transferencia": "+5511988887777",
+                    "retencao_dias": 30,
+                },
+            )
         if pedido.method == "GET":
             return httpx.Response(200, json={"clinicas": clinicas})
         return httpx.Response(201, json={"chamada_id": "c1"})
@@ -74,6 +87,10 @@ async def test_abre_chamada_na_unica_clinica_com_a_sala_como_chave() -> None:
     assert pedidos[1].headers["Idempotency-Key"] == "sala-1"
     assert pedidos[1].headers["X-Clinica-Id"] == clinica
     assert json.loads(pedidos[1].content) == {"telefone": TELEFONE, "sala": "sala-1"}
+    assert pedidos[2].headers["X-Chamada-Id"] == "c1"
+    assert chamada.configuracao.voz == "Kore"
+    assert chamada.configuracao.dentro_do_horario is False
+    assert chamada.configuracao.numero_transferencia == "+5511988887777"
 
 
 @pytest.mark.parametrize("quantas", [0, 2])
@@ -302,3 +319,37 @@ def test_recusa_da_trava_nao_vira_desfecho() -> None:
         content=types.Content(role="user", parts=[types.Part(function_response=resposta)]),
     )
     assert resumir([_falou("essa mesma"), recusa]).desfecho == "duvida"
+
+
+def test_saudacao_configurada_entra_no_prompt_com_o_nome_da_clinica() -> None:
+    agora = datetime(2026, 11, 3, tzinfo=UTC)
+    padrao = montar_prompt("Clínica X", agora)
+    assert '"Olá, você ligou para a Clínica X.' in padrao
+    configurada = montar_prompt(
+        "Clínica X", agora, ConfiguracaoDaLigacao(saudacao="Bom dia, aqui é a {clinica}.")
+    )
+    assert '"Bom dia, aqui é a Clínica X.' in configurada
+    assert "Você autoriza?" in configurada
+
+
+def test_prompt_diz_se_esta_no_horario_sem_revelar_o_numero() -> None:
+    agora = datetime(2026, 11, 3, tzinfo=UTC)
+    dentro = montar_prompt("X", agora, ConfiguracaoDaLigacao(numero_transferencia="+5511988887777"))
+    assert "em horário de atendimento" in dentro
+    assert "988887777" not in dentro
+    fora = montar_prompt("X", agora, ConfiguracaoDaLigacao(dentro_do_horario=False))
+    assert "FORA do horário" in fora
+    assert "registrar_pedido_retorno" in fora
+    assert "{horario}" not in fora
+
+
+def test_voz_escolhida_vai_para_o_gemini() -> None:
+    speech = config_de_voz(ConfigAgente(), "Kore").speech_config
+    assert speech is not None
+    assert speech.language_code == "pt-BR"
+    assert speech.voice_config is not None
+    assert speech.voice_config.prebuilt_voice_config is not None
+    assert speech.voice_config.prebuilt_voice_config.voice_name == "Kore"
+    padrao = config_de_voz(ConfigAgente()).speech_config
+    assert padrao is not None
+    assert padrao.voice_config is None

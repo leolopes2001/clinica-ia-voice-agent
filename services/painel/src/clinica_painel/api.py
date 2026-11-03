@@ -17,6 +17,7 @@ MENSAGENS = {
     "hold_perdido": "O horário se perdeu. Escolha outro.",
     "indisponivel": "Este horário não está disponível.",
     "login_bloqueado": "Muitas tentativas erradas. Espere 15 minutos e tente de novo.",
+    "numero_transferencia_invalido": "Número de transferência inválido. Use o DDD, ou sip:ramal.",
     "ocupado": "Esse horário acabou de ser ocupado. Escolha outro.",
     "paciente_duplicado": "Já existe esse paciente neste telefone.",
     "paciente_nao_encontrado": "Paciente não encontrado.",

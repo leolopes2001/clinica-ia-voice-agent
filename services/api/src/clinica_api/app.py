@@ -10,7 +10,15 @@ from fastapi.responses import JSONResponse
 from pydantic import AwareDatetime
 from sqlalchemy import text
 
-from clinica_api import agenda, chamadas, painel, painel_cadastros, painel_operacao, voz
+from clinica_api import (
+    agenda,
+    chamadas,
+    configuracao_agente,
+    painel,
+    painel_cadastros,
+    painel_operacao,
+    voz,
+)
 from clinica_api.agenda import Contexto, ErroAgenda
 from clinica_api.autenticacao import Sessao, exigir_token, papel_do_token
 from clinica_api.esquemas import (
@@ -48,7 +56,13 @@ from clinica_api.esquemas import (
 )
 from clinica_api.horarios import ProcedimentoNaoEncontrado, listar_horarios_livres
 from clinica_api.publicacao import PublicadorAgenda, PublicadorRabbit
-from clinica_core.config import ConfigAgenda, ConfigPostgres, ConfigRabbit, ConfigTokens
+from clinica_core.config import (
+    ConfigAgenda,
+    ConfigPostgres,
+    ConfigRabbit,
+    ConfigRetencao,
+    ConfigTokens,
+)
 from clinica_core.db import criar_engine, criar_fabrica_sessoes
 
 _STATUS_POR_MOTIVO = {
@@ -60,6 +74,7 @@ _STATUS_POR_MOTIVO = {
     "sem_permissao": HTTPStatus.FORBIDDEN,
     "registro_nao_encontrado": HTTPStatus.NOT_FOUND,
     "telefone_invalido": HTTPStatus.UNPROCESSABLE_ENTITY,
+    "numero_transferencia_invalido": HTTPStatus.UNPROCESSABLE_ENTITY,
     "exige_chamada": HTTPStatus.BAD_REQUEST,
     "exige_painel": HTTPStatus.BAD_REQUEST,
     "dentista_nao_encontrado": HTTPStatus.NOT_FOUND,
@@ -98,9 +113,15 @@ async def _contexto_de_abertura(
     return await agenda.resolver_contexto(sessao, x_chamada_id, x_clinica_id)
 
 
-def _config(request: Request) -> ConfigAgenda:
-    config: ConfigAgenda = request.app.state.config_agenda
-    return config
+async def _config(
+    request: Request, sessao: Sessao, contexto: Annotated[Contexto, Depends(_contexto)]
+) -> ConfigAgenda:
+    configurada = await configuracao_agente.configuracao_da_agenda(
+        sessao, contexto.clinica_id, request.app.state.config_agenda
+    )
+    # Encerra a leitura: o now() de cada operação não deve vir de antes dela.
+    await sessao.commit()
+    return configurada
 
 
 ContextoDaRequisicao = Annotated[Contexto, Depends(_contexto)]
@@ -138,6 +159,7 @@ def criar_app(
 ) -> FastAPI:
     engine = criar_engine(config_postgres or ConfigPostgres())
     publicador_agenda = publicador or PublicadorRabbit(ConfigRabbit())
+    config_retencao = ConfigRetencao()
 
     @asynccontextmanager
     async def ciclo_de_vida(_: FastAPI) -> AsyncIterator[None]:
@@ -155,6 +177,7 @@ def criar_app(
     app.include_router(painel.router)
     app.include_router(painel_cadastros.router)
     app.include_router(painel_operacao.router)
+    app.include_router(configuracao_agente.router)
     app.add_exception_handler(ErroAgenda, _falha)
     app.add_exception_handler(ProcedimentoNaoEncontrado, _procedimento_nao_encontrado)
 
@@ -255,6 +278,12 @@ def criar_app(
         entrada: ConsentimentoEntrada, sessao: Sessao, contexto: ContextoDaRequisicao
     ) -> ConsentimentoRegistrado:
         return await chamadas.registrar_consentimento(sessao, contexto, entrada)
+
+    @app.get("/chamadas/configuracao")
+    async def configuracao_da_ligacao(
+        sessao: Sessao, contexto: ContextoDaRequisicao
+    ) -> configuracao_agente.ConfiguracaoDaLigacao:
+        return await chamadas.configuracao_da_ligacao(sessao, contexto, config_retencao)
 
     @app.post("/identidade/identificar")
     async def identificar(

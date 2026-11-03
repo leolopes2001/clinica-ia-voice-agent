@@ -1,5 +1,6 @@
 import secrets
 from uuid import UUID
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import insert
@@ -7,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from clinica_api import idempotencia
 from clinica_api.agenda import Contexto, ErroAgenda, compor_chave, transacao
+from clinica_api.configuracao_agente import ConfiguracaoDaLigacao, dentro_do_horario
 from clinica_api.esquemas import (
     CadastrarPacienteEntrada,
     ChamadaCriada,
@@ -24,7 +26,8 @@ from clinica_api.esquemas import (
     VerificarIdentidadeEntrada,
 )
 from clinica_api.travas import travar
-from clinica_core.modelos import Chamada, Clinica, Paciente, PedidoRetorno
+from clinica_core.config import ConfigRetencao
+from clinica_core.modelos import Chamada, Clinica, ConfiguracaoAgente, Paciente, PedidoRetorno
 
 MAXIMO_TENTATIVAS_IDENTIDADE = 3
 _TENTATIVAS_DE_PROTOCOLO = 5
@@ -83,6 +86,24 @@ async def criar_chamada(
         resposta = ChamadaCriada(chamada_id=chamada.id)
         await idempotencia.guardar(sessao, chave_completa, resposta.model_dump(mode="json"))
     return resposta
+
+
+async def configuracao_da_ligacao(
+    sessao: AsyncSession, contexto: Contexto, retencao: ConfigRetencao
+) -> ConfiguracaoDaLigacao:
+    _exigir_chamada(contexto)
+    clinica = await sessao.get_one(Clinica, contexto.clinica_id)
+    linha = await sessao.get(ConfiguracaoAgente, contexto.clinica_id)
+    agora = (await sessao.execute(select(func.now()))).scalar_one()
+    return ConfiguracaoDaLigacao(
+        saudacao=linha.saudacao if linha else None,
+        voz=linha.voz if linha else None,
+        dentro_do_horario=dentro_do_horario(
+            linha.horario_comercial if linha else None, agora, ZoneInfo(clinica.fuso)
+        ),
+        numero_transferencia=linha.numero_transferencia if linha else None,
+        retencao_dias=retencao.transcricao_dias,
+    )
 
 
 async def registrar_consentimento(

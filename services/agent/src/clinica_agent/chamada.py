@@ -1,7 +1,7 @@
 """O que a ligação entrega ao agente antes de o modelo entrar: nada aqui passa pelo LLM."""
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from uuid import UUID
 
 import httpx
@@ -19,11 +19,22 @@ class ClinicaNaoDefinida(Exception):
     pass
 
 
+class ConfiguracaoDaLigacao(BaseModel):
+    """Vem da API, ao atender. O número de transferência nunca vai ao modelo."""
+
+    saudacao: str | None = None
+    voz: str | None = None
+    dentro_do_horario: bool = True
+    numero_transferencia: str | None = None
+    retencao_dias: int = 90
+
+
 @dataclass(frozen=True)
 class ChamadaAberta:
     chamada_id: str
     clinica_id: UUID
     clinica_nome: str
+    configuracao: ConfiguracaoDaLigacao = field(default_factory=ConfiguracaoDaLigacao)
 
 
 class _Clinica(BaseModel):
@@ -64,4 +75,12 @@ async def abrir_chamada(
         json={"telefone": telefone, "sala": sala},
     )
     resposta.raise_for_status()
-    return ChamadaAberta(resposta.json()["chamada_id"], clinica.clinica_id, clinica.nome)
+    chamada_id = resposta.json()["chamada_id"]
+    resposta = await api.get("/chamadas/configuracao", headers={"X-Chamada-Id": chamada_id})
+    resposta.raise_for_status()
+    return ChamadaAberta(
+        chamada_id,
+        clinica.clinica_id,
+        clinica.nome,
+        ConfiguracaoDaLigacao.model_validate(resposta.json()),
+    )
