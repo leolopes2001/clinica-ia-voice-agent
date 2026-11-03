@@ -153,6 +153,7 @@ async def test_ligacao_recebe_a_configuracao(admin: httpx.AsyncClient, ambiente:
         "dentro_do_horario": True,
         "numero_transferencia": "sip:100@10.0.0.1",
         "retencao_dias": 90,
+        "telefone_oculto": False,
     }
 
 

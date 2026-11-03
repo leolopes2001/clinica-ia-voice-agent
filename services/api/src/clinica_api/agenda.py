@@ -53,6 +53,7 @@ class Contexto:
     paciente_id: UUID | None = None
     identidade_verificada: bool = False
     consentimento: bool = False
+    telefone_oculto: bool = False
     # Só no painel: quem fez a ação, para a auditoria.
     usuario_id: UUID | None = None
 
@@ -92,6 +93,7 @@ async def _ler_contexto(
             chamada.paciente_id,
             chamada.paciente_id is not None and chamada.identidade_verificada_em is not None,
             chamada.consentimento_em is not None,
+            chamada.telefone is None,
         )
     if clinica_id is None:
         raise ErroAgenda("contexto_ausente")
@@ -375,8 +377,13 @@ async def confirmar(
     return resposta
 
 
-def exigir_consentimento(contexto: Contexto) -> None:
-    if contexto.voz and not contexto.consentimento:
+def exigir_identificacao_permitida(contexto: Contexto) -> None:
+    """A mesma lista de ferramentas vale para as duas recusas. Sem número, nem adianta consentir."""
+    if not contexto.voz:
+        return
+    if contexto.telefone_oculto:
+        raise ErroAgenda("telefone_oculto")
+    if not contexto.consentimento:
         raise ErroAgenda("consentimento_ausente")
 
 

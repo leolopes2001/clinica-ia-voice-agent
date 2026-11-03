@@ -35,6 +35,13 @@ _FORA_DO_HORARIO = (
     "registre um pedido de retorno com `registrar_pedido_retorno` e informe o protocolo. "
     "Sem consentimento, peça para ligar de novo no horário de atendimento."
 )
+_TELEFONE_OCULTO = (
+    "Esta ligação veio com o número oculto, então você não consegue identificar a pessoa: ainda "
+    "peça a autorização, e depois só tire dúvidas e transfira. Não tente identificar, cadastrar, "
+    "agendar, remarcar, cancelar ou registrar pedido de retorno. Se a pessoa quiser uma dessas "
+    "coisas, explique que precisa ligar de um número identificado, ou falar com a recepção. "
+    "Fora do horário de atendimento, avise e peça para ligar de novo."
+)
 # Tempo para o áudio da despedida tocar: o LiveKitRunner descarta o que falta ao desligar.
 ESPERA_DA_DESPEDIDA_S = 4.0
 
@@ -105,6 +112,7 @@ def montar_prompt(
         .replace("{hoje}", hoje)
         .replace("{retencao_dias}", str(ligacao.retencao_dias))
         .replace("{horario}", _DENTRO_DO_HORARIO if ligacao.dentro_do_horario else _FORA_DO_HORARIO)
+        .replace("{telefone}", _TELEFONE_OCULTO if ligacao.telefone_oculto else "")
     )
 
 

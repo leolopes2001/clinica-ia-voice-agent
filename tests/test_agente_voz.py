@@ -17,7 +17,6 @@ from clinica_agent.chamada import (
     ChamadaAberta,
     ClinicaNaoDefinida,
     ConfiguracaoDaLigacao,
-    SemTelefone,
     abrir_chamada,
     telefone_do_chamador,
 )
@@ -48,13 +47,50 @@ def test_telefone_vem_do_sip_mesmo_com_metadados() -> None:
 
 def test_telefone_de_teste_exige_permissao() -> None:
     assert telefone_do_chamador({}, False, _metadados(), True) == TELEFONE
-    with pytest.raises(SemTelefone):
-        telefone_do_chamador({}, False, _metadados(), False)
+    assert telefone_do_chamador({}, False, _metadados(), False) is None
 
 
 def test_navegador_nao_finge_ser_sip() -> None:
-    with pytest.raises(SemTelefone):
-        telefone_do_chamador({"sip.phoneNumber": TELEFONE}, False, None, True)
+    assert telefone_do_chamador({"sip.phoneNumber": TELEFONE}, False, None, True) is None
+
+
+@pytest.mark.parametrize(
+    ("bruto", "esperado"),
+    [
+        ("011988887777", "+5511988887777"),
+        ("5511988887777", "+5511988887777"),
+        ("sip:11988887777@192.168.0.10", "+5511988887777"),
+    ],
+)
+def test_caller_id_do_gateway_vira_e164(bruto: str, esperado: str) -> None:
+    assert telefone_do_chamador({"sip.phoneNumber": bruto}, True, None, False) == esperado
+
+
+@pytest.mark.parametrize("bruto", ["anonymous", "restricted", "", "988887777"])
+def test_caller_id_sem_numero_confiavel_e_oculto(bruto: str) -> None:
+    assert telefone_do_chamador({"sip.phoneNumber": bruto}, True, None, False) is None
+
+
+def test_sip_sem_o_atributo_e_oculto_e_nao_derruba_a_ligacao() -> None:
+    assert telefone_do_chamador({}, True, _metadados(), True) is None
+
+
+async def test_numero_oculto_abre_chamada_sem_o_campo() -> None:
+    pedidos: list[httpx.Request] = []
+    clinica = {"clinica_id": str(uuid4()), "nome": "X"}
+    async with _api([clinica], pedidos) as api:
+        await abrir_chamada(api, None, None, "sala-1")
+    assert json.loads(pedidos[1].content) == {"sala": "sala-1"}
+
+
+def test_prompt_avisa_do_numero_oculto_so_quando_ha() -> None:
+    agora = datetime(2026, 11, 3, tzinfo=UTC)
+    oculto = montar_prompt("X", agora, ConfiguracaoDaLigacao(telefone_oculto=True))
+    assert "número oculto" in oculto
+    assert "ligar de novo" in oculto
+    normal = montar_prompt("X", agora)
+    assert "veio com o número oculto" not in normal
+    assert "{telefone}" not in normal
 
 
 def _api(clinicas: list[dict[str, str]], pedidos: list[httpx.Request]) -> httpx.AsyncClient:
@@ -69,6 +105,7 @@ def _api(clinicas: list[dict[str, str]], pedidos: list[httpx.Request]) -> httpx.
                     "dentro_do_horario": False,
                     "numero_transferencia": "+5511988887777",
                     "retencao_dias": 30,
+                    "telefone_oculto": False,
                 },
             )
         if pedido.method == "GET":

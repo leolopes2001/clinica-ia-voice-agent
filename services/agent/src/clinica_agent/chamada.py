@@ -7,12 +7,10 @@ from uuid import UUID
 import httpx
 from pydantic import BaseModel
 
+from clinica_core.telefone import normalizar_telefone
+
 CHAVE_CHAMADA = "chamada_id"
 ATRIBUTO_TELEFONE_SIP = "sip.phoneNumber"
-
-
-class SemTelefone(Exception):
-    pass
 
 
 class ClinicaNaoDefinida(Exception):
@@ -27,6 +25,7 @@ class ConfiguracaoDaLigacao(BaseModel):
     dentro_do_horario: bool = True
     numero_transferencia: str | None = None
     retencao_dias: int = 90
+    telefone_oculto: bool = False
 
 
 @dataclass(frozen=True)
@@ -44,21 +43,20 @@ class _Clinica(BaseModel):
 
 def telefone_do_chamador(
     atributos: dict[str, str], eh_sip: bool, metadados_do_job: str | None, permitir_teste: bool
-) -> str:
-    """O SIP sempre vence. Só quem tem a chave do LiveKit consegue escrever os metadados."""
+) -> str | None:
+    """O SIP sempre vence. Sem um número confiável, a chamada segue como número oculto."""
     if eh_sip:
-        telefone = atributos.get(ATRIBUTO_TELEFONE_SIP)
+        bruto = atributos.get(ATRIBUTO_TELEFONE_SIP)
     elif permitir_teste:
-        telefone = json.loads(metadados_do_job or "{}").get("telefone_de_teste")
+        # Só quem tem a chave do LiveKit consegue escrever os metadados.
+        bruto = json.loads(metadados_do_job or "{}").get("telefone_de_teste")
     else:
-        telefone = None
-    if not telefone:
-        raise SemTelefone
-    return str(telefone)
+        bruto = None
+    return normalizar_telefone(str(bruto)) if bruto else None
 
 
 async def abrir_chamada(
-    api: httpx.AsyncClient, clinica_id: UUID | None, telefone: str, sala: str
+    api: httpx.AsyncClient, clinica_id: UUID | None, telefone: str | None, sala: str
 ) -> ChamadaAberta:
     resposta = await api.get("/clinicas")
     resposta.raise_for_status()
@@ -72,7 +70,7 @@ async def abrir_chamada(
         "/chamadas",
         # A sala como chave: um despacho repetido não duplica a chamada.
         headers={"X-Clinica-Id": str(clinica.clinica_id), "Idempotency-Key": sala},
-        json={"telefone": telefone, "sala": sala},
+        json={"sala": sala, **({"telefone": telefone} if telefone else {})},
     )
     resposta.raise_for_status()
     chamada_id = resposta.json()["chamada_id"]

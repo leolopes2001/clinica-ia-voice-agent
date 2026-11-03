@@ -83,6 +83,7 @@ _STATUS_POR_MOTIVO = {
     "contexto_divergente": HTTPStatus.FORBIDDEN,
     "identidade_nao_verificada": HTTPStatus.FORBIDDEN,
     "consentimento_ausente": HTTPStatus.FORBIDDEN,
+    "telefone_oculto": HTTPStatus.FORBIDDEN,
     "agendamento_nao_encontrado": HTTPStatus.NOT_FOUND,
     "chamada_nao_encontrada": HTTPStatus.NOT_FOUND,
     "clinica_nao_encontrada": HTTPStatus.NOT_FOUND,
@@ -130,7 +131,7 @@ ContextoDeAbertura = Annotated[Contexto, Depends(_contexto_de_abertura)]
 
 
 def _contexto_com_consentimento(contexto: ContextoDaRequisicao) -> Contexto:
-    agenda.exigir_consentimento(contexto)
+    agenda.exigir_identificacao_permitida(contexto)
     return contexto
 
 
