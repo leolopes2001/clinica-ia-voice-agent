@@ -458,6 +458,18 @@ São 7 fases, cada uma terminando em algo que roda e pode ser testado. As fases 
 - **Modelo de voz:** os dois candidatos são de pré-lançamento ou apontam para a versão mais recente (`-latest`) e podem mudar sem aviso. Por isso o nome fica em `AGENTE_MODELO_VOZ`, e não no código.
 - **Uso do chip pela operadora:** algumas operadoras restringem o uso de chips pré-pagos em gateways. Verifique o contrato e prefira um plano empresarial.
 
+## Pendente de validação
+
+O que o código já cobre com fakes, mas só pode ser confirmado com crédito do Gemini, com o gateway ou por uma pessoa. O roteiro passo a passo está em `docs/validacao-final.md`.
+
+### Com crédito do Gemini
+
+- [ ] Rodar a avaliação do RAG com embeddings reais: `RODAR_TESTES_GEMINI=1 uv run pytest tests/test_avaliacao_rag.py`.
+
+### Com o gateway e a telefonia
+
+### Pelo usuário
+
 ## Decisões tomadas pelo agente
 
 Decisões técnicas tomadas durante a implementação, com a opção mais conservadora.
@@ -529,3 +541,4 @@ Decisões técnicas tomadas durante a implementação, com a opção mais conser
 | T3.6 | A trava cobre remarcar e cancelar, como decidido. `confirmar_agendamento` continua só com a regra do prompt. | O item 4 da Constituição também vale para agendar, mas o pedido foi para as duas operações. Fica registrado como lacuna a decidir. |
 | T3.8 | O CI também confere `ruff format`. As actions ficam fixadas por commit, e o `uv`, na versão dos Dockerfiles. A permissão do token é só de leitura. | É a verificação que o pre-commit já faz. A fixação impede que uma action mude sem aviso, numa pipeline que recebe a chave do Gemini. |
 | T3.8 | Sem o segredo `GOOGLE_API_KEY`, a avaliação do RAG é pulada, e o CI continua verde. Pull requests vindos de forks nunca recebem o segredo. Os testes de `test_compose` que exigem a stack no ar também são pulados no CI. | O CI não precisa da chave para o resto. Cada execução com o segredo gasta créditos de embedding: a base e as 30 perguntas. |
+| Ajuste | Os testes só falam com o Gemini com `RODAR_TESTES_GEMINI=1`: sem isso, o `conftest.py` esvazia `GOOGLE_API_KEY`, antes do `.env` ser lido. No CI, a chave só é entregue com a variável de repositório `RODAR_TESTES_GEMINI=1`. | A chave do `.env` e o segredo do CI faziam cada `pytest` e cada push gastar crédito sem ninguém pedir. Corrige a decisão da T3.8. |

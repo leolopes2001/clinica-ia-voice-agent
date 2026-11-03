@@ -1,6 +1,7 @@
 import asyncio
 import base64
 import json
+import os
 import urllib.error
 import urllib.request
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
@@ -17,6 +18,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from clinica_core.config import ConfigPostgres, ConfigRabbit
 from clinica_core.db import criar_engine
+
+# Vale antes de qualquer teste: a chave do .env gastaria crédito do Gemini sem ninguém pedir.
+if os.environ.get("RODAR_TESTES_GEMINI") != "1":
+    os.environ["GOOGLE_API_KEY"] = ""
 
 ALEMBIC_INI = Path(__file__).resolve().parent / "services" / "api" / "alembic.ini"
 
