@@ -8,6 +8,7 @@ import pytest
 
 RAIZ = Path(__file__).resolve().parent.parent
 IMAGENS = {
+    "backup": "pgvector/pgvector:pg16",
     "postgres": "pgvector/pgvector:pg16",
     "rabbitmq": "rabbitmq:3-management",
     "redis": "redis:7",
@@ -16,6 +17,7 @@ IMAGENS = {
 CONSTRUIDOS = ["api", "painel", "worker", "mcp-clinica", "mcp-conhecimento", "agent"]
 DOCKERFILES = {servico: servico.replace("-", "_") for servico in CONSTRUIDOS}
 PORTAS = {
+    "backup": set[tuple[str, str]](),
     "postgres": {("127.0.0.1", "5432")},
     "rabbitmq": {("127.0.0.1", "5672"), ("127.0.0.1", "15672")},
     "redis": set[tuple[str, str]](),
@@ -105,6 +107,12 @@ def test_painel_recebe_o_volume_da_base_e_nao_o_banco(configuracao: dict[str, An
     ]
     assert not [nome for nome in painel["environment"] if nome.startswith("POSTGRES_")]
     assert "postgres" not in painel["depends_on"]
+
+
+def test_backup_le_a_base_sem_poder_alterar(configuracao: dict[str, Any]) -> None:
+    volumes = {v["target"]: v for v in configuracao["backup"]["volumes"]}
+    assert volumes["/conhecimento"]["read_only"] is True
+    assert volumes["/backups"]["source"] == "backups"
 
 
 def test_worker_nao_publica_portas(configuracao: dict[str, Any]) -> None:

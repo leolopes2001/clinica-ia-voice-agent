@@ -39,6 +39,37 @@ services:
       retries: 10
       start_period: 30s
 
+  backup:
+    image: pgvector/pgvector:pg16
+    restart: unless-stopped
+    entrypoint: ["sh", "/backup/backup.sh"]
+    environment:
+      PGHOST: postgres
+      PGUSER: ${POSTGRES_USER:-clinica}
+      PGPASSWORD: ${POSTGRES_PASSWORD:-clinica}
+      PGDATABASE: ${POSTGRES_DB:-clinica}
+      TZ: America/Sao_Paulo
+      BACKUP_HORA: ${BACKUP_HORA:-03:30}
+      BACKUP_RETENCAO_DIAS: ${BACKUP_RETENCAO_DIAS:-14}
+      # Vazia: sem cópia externa, porque o backup nunca sai da máquina sem criptografia.
+      BACKUP_SENHA: ${BACKUP_SENHA:-}
+    volumes:
+      - ./infra/backup:/backup:ro
+      - backups:/backups
+      - conhecimento_arquivos:/conhecimento:ro
+      # Aponte para um disco externo ou uma pasta sincronizada.
+      - ${BACKUP_DESTINO_EXTERNO:-./dados/backups-externos}:/externo
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      # Saudável só com um backup de até 26 h: cobre um dia inteiro e a folga de uma nova tentativa.
+      test: ["CMD-SHELL", "find /backups/ultimo.json -mmin -1560 | grep -q . && grep -q '\"situacao\":\"ok\"' /backups/ultimo.json"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 120s
+
   redis:
     image: redis:7
     restart: unless-stopped
@@ -317,6 +348,7 @@ services:
         condition: service_healthy
 
 volumes:
+  backups:
   postgres_data:
   rabbitmq_data:
   conhecimento_arquivos:
