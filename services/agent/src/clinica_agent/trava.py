@@ -5,7 +5,7 @@ import logging
 import re
 import time
 import unicodedata
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 from google.adk.events import Event
@@ -16,17 +16,27 @@ from clinica_agent.resumo import resultado_da_ferramenta
 logger = logging.getLogger(__name__)
 
 _PREPARO_DA_EXECUCAO = {
+    # Agendar não tem etapa de preparar: é o horário segurado que o paciente confirma.
+    "confirmar_agendamento": "segurar_horario",
     "executar_cancelamento": "preparar_cancelamento",
     "executar_remarcacao": "preparar_remarcacao",
 }
+# Um "sim" dado antes destas respondeu a outra pergunta, como "o nome está certo?".
+_RENOVAM_O_PREPARO_DO_HOLD = ("cadastrar_paciente", "selecionar_paciente")
 _RECUSAS_DA_TRAVA = ("confirmacao_ausente", "preparo_ausente")
 _CAMPOS_DA_EXECUCAO = ("agendamento_id", "hold_id")
 # O Gemini 3.x entrega a chamada de ferramenta sem esperar a transcrição da fala.
 ESPERA_PELA_TRANSCRICAO_S = 2.0
 # A fala pode ter mais trechos a caminho: "sim", e depois "mas espera".
 ASSENTAR_TRANSCRICAO_S = 0.3
-_CONFIRMA = re.compile(r"\b(sim|confirmo|pode (confirmar|cancelar|remarcar|trocar))\b")
-_DESFAZ = re.compile(r"\b(nao|pode ser|talvez|acho|espera|espere|perai|mas|depende|sei la)\b")
+_SEM_OBJECAO = re.compile(r"\b(nao tem problema|sem problema)\b")
+_CONFIRMA = re.compile(
+    r"\b(sim|confirmo|nao tem problema|sem problema"
+    r"|pode (confirmar|cancelar|remarcar|trocar|marcar|agendar))\b"
+)
+_DESFAZ = re.compile(
+    r"\b(nao|problema|pode ser|talvez|acho|espera|espere|perai|mas|depende|sei la)\b"
+)
 
 
 def _normalizar(texto: str) -> str:
@@ -40,7 +50,9 @@ def confirmacao_explicita(fala: str) -> bool:
     if "?" in fala:
         return False
     normalizada = _normalizar(fala)
-    return bool(_CONFIRMA.search(normalizada)) and not _DESFAZ.search(normalizada)
+    # "Não tem problema" concorda, mas um "não" ou um "problema" que sobre desfaz a confirmação.
+    resto = _SEM_OBJECAO.sub(" ", normalizada)
+    return bool(_CONFIRMA.search(normalizada)) and not _DESFAZ.search(resto)
 
 
 @dataclass(frozen=True)
@@ -145,14 +157,23 @@ class TravaDeConfirmacao:
     async def depois_da_ferramenta(
         self, tool: BaseTool, args: dict[str, Any], tool_context: Any, tool_response: Any
     ) -> None:
+        resultado = resultado_da_ferramenta(tool_response)
         if tool.name in _PREPARO_DA_EXECUCAO:
             # O ADK também passa aqui com a recusa da trava, e essa não gasta o preparo: o paciente
             # ainda pode dizer "sim". Fora isso, cada preparo vale para uma execução.
-            motivo = resultado_da_ferramenta(tool_response).get("motivo")
-            if motivo not in _RECUSAS_DA_TRAVA:
+            if resultado.get("motivo") not in _RECUSAS_DA_TRAVA:
                 self._preparo = None
-        elif (
-            tool.name in _PREPARO_DA_EXECUCAO.values()
-            and resultado_da_ferramenta(tool_response).get("ok") is True
-        ):
+        elif resultado.get("ok") is not True:
+            return
+        elif tool.name == "segurar_horario":
+            # Quem conhece o hold é a resposta: segurar recebe só o horário.
+            argumentos = {"hold_id": str(resultado.get("hold_id"))}
+            self._preparo = _Preparo(tool.name, argumentos, time.monotonic())
+        elif tool.name in _PREPARO_DA_EXECUCAO.values():
             self._preparo = _Preparo(tool.name, _argumentos_da_acao(args), time.monotonic())
+        elif (
+            tool.name in _RENOVAM_O_PREPARO_DO_HOLD
+            and self._preparo is not None
+            and self._preparo.ferramenta == "segurar_horario"
+        ):
+            self._preparo = replace(self._preparo, concluido_em=time.monotonic())

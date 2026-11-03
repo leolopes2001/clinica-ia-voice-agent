@@ -22,6 +22,11 @@ PREPARAR = _Ferramenta("preparar_cancelamento")
 EXECUTAR = _Ferramenta("executar_cancelamento")
 PREPARAR_TROCA = _Ferramenta("preparar_remarcacao")
 EXECUTAR_TROCA = _Ferramenta("executar_remarcacao")
+SEGURAR = _Ferramenta("segurar_horario")
+CONFIRMAR = _Ferramenta("confirmar_agendamento")
+CADASTRAR = _Ferramenta("cadastrar_paciente")
+HOLD = {"hold_id": "h1"}
+HOLD_SEGURADO = {"content": [{"type": "text", "text": '{"ok": true, "hold_id": "h1"}'}]}
 
 
 def _fala(texto: str, finished: bool = True) -> Event:
@@ -54,6 +59,12 @@ async def _preparada(args: dict[str, Any] = CONSULTA) -> TravaDeConfirmacao:
         "pode confirmar",
         "Confirmo.",
         "sim senhora",
+        "Sim, não tem problema.",
+        "Não tem problema.",
+        "Sem problema",
+        "não tem problema nenhum",
+        "Pode marcar",
+        "Sim, pode agendar",
     ],
 )
 def test_confirmacoes_explicitas(fala: str) -> None:
@@ -80,6 +91,14 @@ def test_confirmacoes_explicitas(fala: str) -> None:
         "Talvez sim",
         "acho que sim",
         "",
+        "Não, não tem problema",
+        "Não tem problema?",
+        "Tem problema",
+        "Tem problema, sim",
+        "Sim, tem um problema",
+        "Sem problema, mas espera",
+        "Não pode marcar",
+        "pode marcar não",
     ],
 )
 def test_nao_sao_confirmacao_explicita(fala: str) -> None:
@@ -215,3 +234,90 @@ async def test_falha_real_ao_executar_gasta_o_preparo() -> None:
     await trava.depois_da_ferramenta(EXECUTAR, CONSULTA, None, falha)
     resposta = await trava.antes_da_ferramenta(EXECUTAR, CONSULTA, None)
     assert resposta == {"ok": False, "motivo": "preparo_ausente"}
+
+
+async def _segurado() -> TravaDeConfirmacao:
+    trava = _trava()
+    await trava.depois_da_ferramenta(SEGURAR, {"inicio": "x"}, None, HOLD_SEGURADO)
+    await asyncio.sleep(0.001)
+    return trava
+
+
+async def test_confirmar_agendamento_sem_hold_segurado_e_bloqueado() -> None:
+    trava = _trava()
+    trava.observar(_fala("Sim"))
+    resposta = await trava.antes_da_ferramenta(CONFIRMAR, HOLD, None)
+    assert resposta == {"ok": False, "motivo": "preparo_ausente"}
+
+
+async def test_segurar_que_falhou_nao_prepara_a_confirmacao() -> None:
+    trava = _trava()
+    ocupado = {"content": [{"type": "text", "text": '{"ok": false, "motivo": "ocupado"}'}]}
+    await trava.depois_da_ferramenta(SEGURAR, {"inicio": "x"}, None, ocupado)
+    trava.observar(_fala("Sim"))
+    resposta = await trava.antes_da_ferramenta(CONFIRMAR, HOLD, None)
+    assert resposta == {"ok": False, "motivo": "preparo_ausente"}
+
+
+async def test_confirmar_agendamento_exige_sim_depois_de_segurar() -> None:
+    trava = await _segurado()
+    trava.observar(_fala("Essa mesma"))
+    resposta = await trava.antes_da_ferramenta(CONFIRMAR, HOLD, None)
+    assert resposta == {"ok": False, "motivo": "confirmacao_ausente"}
+    await trava.depois_da_ferramenta(CONFIRMAR, HOLD, None, resposta)
+    await asyncio.sleep(0.001)
+    trava.observar(_fala("Sim, não tem problema"))
+    assert await trava.antes_da_ferramenta(CONFIRMAR, HOLD, None) is None
+
+
+async def test_sim_antes_de_segurar_nao_confirma() -> None:
+    trava = _trava()
+    trava.observar(_fala("Sim, a primeira"))
+    await asyncio.sleep(0.001)
+    await trava.depois_da_ferramenta(SEGURAR, {"inicio": "x"}, None, HOLD_SEGURADO)
+    resposta = await trava.antes_da_ferramenta(CONFIRMAR, HOLD, None)
+    assert resposta == {"ok": False, "motivo": "confirmacao_ausente"}
+
+
+async def test_outro_hold_nao_confirma() -> None:
+    trava = await _segurado()
+    trava.observar(_fala("Sim"))
+    resposta = await trava.antes_da_ferramenta(CONFIRMAR, {"hold_id": "h2"}, None)
+    assert resposta == {"ok": False, "motivo": "preparo_ausente"}
+
+
+async def test_sim_ao_nome_nao_confirma_o_agendamento() -> None:
+    trava = await _segurado()
+    trava.observar(_fala("Sim, o nome está certo"))
+    await asyncio.sleep(0.001)
+    await trava.depois_da_ferramenta(CADASTRAR, {"nome": "Ana"}, None, OK)
+    resposta = await trava.antes_da_ferramenta(CONFIRMAR, HOLD, None)
+    assert resposta == {"ok": False, "motivo": "confirmacao_ausente"}
+    await asyncio.sleep(0.001)
+    trava.observar(_fala("Sim, pode confirmar"))
+    assert await trava.antes_da_ferramenta(CONFIRMAR, HOLD, None) is None
+
+
+async def test_cadastro_nao_prepara_nada_sem_hold() -> None:
+    trava = _trava()
+    await trava.depois_da_ferramenta(CADASTRAR, {"nome": "Ana"}, None, OK)
+    trava.observar(_fala("Sim"))
+    resposta = await trava.antes_da_ferramenta(CONFIRMAR, HOLD, None)
+    assert resposta == {"ok": False, "motivo": "preparo_ausente"}
+
+
+async def test_confirmar_com_sucesso_gasta_o_preparo() -> None:
+    trava = await _segurado()
+    trava.observar(_fala("Sim"))
+    assert await trava.antes_da_ferramenta(CONFIRMAR, HOLD, None) is None
+    await trava.depois_da_ferramenta(CONFIRMAR, HOLD, None, OK)
+    resposta = await trava.antes_da_ferramenta(CONFIRMAR, HOLD, None)
+    assert resposta == {"ok": False, "motivo": "preparo_ausente"}
+
+
+async def test_remarcar_segura_e_depois_prepara() -> None:
+    trava = await _segurado()
+    await trava.depois_da_ferramenta(PREPARAR_TROCA, TROCA, None, OK)
+    await asyncio.sleep(0.001)
+    trava.observar(_fala("Sim, pode trocar"))
+    assert await trava.antes_da_ferramenta(EXECUTAR_TROCA, TROCA, None) is None
