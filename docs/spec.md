@@ -138,7 +138,7 @@ O paciente liga para o número da clínica e resolve tudo por voz, sem esperar a
 
 ## Plano técnico
 
-São 11 serviços num Docker Compose. O gateway com chip entrega a ligação ao LiveKit pela rede local. O agente ADK conversa pelo Gemini Live e age por dois servidores MCP: um só de leitura (RAG) e outro de agenda, que é um adaptador fino da API. A API é dona das regras, e o Postgres garante que não haja horário duplicado.
+São 12 serviços num Docker Compose. O gateway com chip entrega a ligação ao LiveKit pela rede local. O agente ADK conversa pelo Gemini Live e age por dois servidores MCP: um só de leitura (RAG) e outro de agenda, que é um adaptador fino da API. A API é dona das regras, e o Postgres garante que não haja horário duplicado.
 
 ```text
 Paciente ──► Gateway GSM/4G ──► livekit-sip ──► livekit-server
@@ -334,6 +334,7 @@ O painel é servido pelo FastAPI com templates Jinja2 e HTMX, e recebe atualiza�
 | --- | --- | --- | --- |
 | `postgres` | `pgvector/pgvector:pg16` | 5432 (só dev) | — |
 | `rabbitmq` | `rabbitmq:3-management` | 15672 (UI), 5672 (só dev) | — |
+| `backup` | `pgvector/pgvector:pg16` | — | postgres |
 | `redis` | `redis:7` | — | — |
 | `livekit` | `livekit/livekit-server` | 7880, 7881/tcp, faixa UDP de RTC | redis |
 | `livekit-sip` | `livekit/sip` | 5060/udp, 10000–20000/udp (só na LAN) | livekit, redis |
@@ -428,7 +429,7 @@ São 7 fases, cada uma terminando em algo que roda e pode ser testado. As fases 
 **Fase 6 — Produção local e LGPD**
 
 - [x] T6.1 Retenção automática de transcrições e texto de consentimento revisado. A retenção só pode apagar a transcrição de uma chamada ligada a uma consulta de voz: a FK e o CHECK `voz_exige_chamada` impedem apagar a chamada ou anular `chamada_id`. O telefone segue o mesmo prazo (`RETENCAO_TRANSCRICAO_DIAS`), em toda chamada, como decidido pelo usuário em 02/11/2026.
-- [ ] T6.2 Backup diário do Postgres (`pg_dump` num volume e cópia externa).
+- [x] T6.2 Backup diário do Postgres (`pg_dump` num volume e cópia externa).
 - [ ] T6.3 Logs estruturados e um painel simples de saúde (serviços, filas, chamadas ativas).
 - [ ] T6.4 Runbook: o que fazer se cair a internet, o gateway ou a API do Gemini.
 - [ ] T6.5 Trocar as senhas padrão de desenvolvimento do Compose (Postgres e RabbitMQ) antes de usar em produção.
@@ -479,6 +480,7 @@ O que o código já cobre com fakes, mas só pode ser confirmado com crédito do
 - [ ] Na sua máquina, a porta 8080 está ocupada por um processo Java, que não é do projeto. Defina `PAINEL_PORTA=8088` no `.env`, ou libere a 8080, antes de subir o painel.
 - [ ] Levar o texto do consentimento a um advogado. Pontos a confirmar: base legal para dados de saúde, e se é preciso dizer que a voz passa pelo Google, na nuvem.
 - [ ] Decidir como atender a um pedido de apagar os dados de um paciente (LGPD). O painel não apaga pacientes, porque consultas apontam para eles. Também não há prazo para consultas e `motivo_cancelamento`.
+- [ ] Escolher o destino da cópia externa de backup (disco externo ou pasta sincronizada), definir `BACKUP_DESTINO_EXTERNO` e `BACKUP_SENHA` no `.env`, e guardar a senha fora do servidor: sem ela, a cópia não abre.
 
 ## Decisões tomadas pelo agente
 
@@ -577,3 +579,5 @@ Decisões técnicas tomadas durante a implementação, com a opção mais conser
 | T6.1 | A retenção também tira `paciente_id` e `identidade_verificada_em` da chamada. O nulo em `chamadas.telefone` entrou aqui, antes da T4.6, que passa a usá-lo. O prazo do telefone conta do fim da chamada, ou do início se ela nunca recebeu o fim. | Sem isso, o telefone apagado voltaria por uma junção com `pacientes`. A linha pedida guarda só data, duração e desfecho. |
 | T6.1 | O worker publica `manutencao.diaria` ao subir e a cada 24 h, e o consumidor pode repetir sem efeito. Falha vai para `manutencao.diaria.dlq`. A limpeza de idempotência vale para chaves com mais de 24 h. A auditoria não tem prazo, porque não guarda dados de paciente. | Um worker reiniciado toda noite nunca chegaria às 24 h. A spec não pede agendador externo. |
 | T6.1 | Texto do consentimento escolhido pelo usuário em 02/11/2026: diz que é uma inteligência artificial, a finalidade, o prazo em dias e a alternativa de quem recusa. O prazo falado vem de `RETENCAO_TRANSCRICAO_DIAS`, pela API. | Se o prazo mudar, o agente fala o valor certo, sem editar o prompt. |
+| T6.2 | Serviço novo `backup`, com a imagem do Postgres e um script. Roda `pg_dump` às 03:30 e ao subir, se não houver backup das últimas 24 h, e confere se o dump abre. Também guarda os arquivos da base de conhecimento. Mantém 14 dias, com `BACKUP_RETENCAO_DIAS`. O health check só fica saudável com um backup bom de até 26 h. | Sem os arquivos, um banco restaurado não permitiria reindexar nada. Máquina desligada à noite não fica sem backup. |
+| T6.2 | A cópia externa só sai criptografada (AES-256, `openssl`), com `BACKUP_SENHA`, para a pasta de `BACKUP_DESTINO_EXTERNO`. Sem senha, não há cópia externa, e a situação aparece na tela de saúde. A restauração usa sempre um banco novo e não toca no banco em uso. Foi testada de ponta a ponta num Postgres novo, em 02/11/2026. | O dump tem dados de saúde. Transcrições apagadas continuam nos backups por até 14 dias: esse é o prazo real de eliminação. |
