@@ -14,6 +14,7 @@ from google.adk.tools.mcp_tool.mcp_session_manager import StreamableHTTPConnecti
 
 from clinica_agent.chamada import CHAVE_CHAMADA, ChamadaAberta
 from clinica_agent.config import ConfigAgente
+from clinica_agent.espera import FraseDeEspera
 from clinica_agent.trava import TravaDeConfirmacao
 
 FUSO = ZoneInfo("America/Sao_Paulo")
@@ -91,7 +92,10 @@ def montar_prompt(clinica: str, agora: datetime) -> str:
 
 
 def criar_agente(
-    config: ConfigAgente, chamada: ChamadaAberta, trava_de_confirmacao: TravaDeConfirmacao
+    config: ConfigAgente,
+    chamada: ChamadaAberta,
+    trava_de_confirmacao: TravaDeConfirmacao,
+    frase_de_espera: FraseDeEspera | None = None,
 ) -> LlmAgent:
     # Uma por ligação: o processo atende uma chamada, e as chamadas não esperam umas pelas outras.
     trava = asyncio.Lock()
@@ -108,7 +112,11 @@ def criar_agente(
         model=config.modelo_voz,
         # Função, e não texto: o ADK trataria as chaves do prompt como variáveis de estado.
         instruction=lambda _: montar_prompt(chamada.clinica_nome, datetime.now(FUSO)),
-        before_tool_callback=trava_de_confirmacao.antes_da_ferramenta,
+        # A primeira que devolver uma resposta encerra a lista: a frase vem antes e só dispara.
+        before_tool_callback=[
+            *([frase_de_espera.antes_da_ferramenta] if frase_de_espera else []),
+            trava_de_confirmacao.antes_da_ferramenta,
+        ],
         after_tool_callback=trava_de_confirmacao.depois_da_ferramenta,
         tools=[
             toolset(config.mcp_clinica_url),
