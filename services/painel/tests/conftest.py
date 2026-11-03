@@ -62,6 +62,7 @@ class Ambiente:
     indexacao: IndexacaoFalsa
     diretorio: Path
     busca_erro: list[int]
+    sondas: dict[str, Any]
 
 
 @pytest.fixture
@@ -110,12 +111,33 @@ async def ambiente(banco: str, tmp_path: Path) -> AsyncIterator[Ambiente]:
         transport=httpx.MockTransport(responder_busca), base_url="http://busca"
     )
     eventos = Distribuidor()
+    sondas: dict[str, Any] = {"fora": set(), "filas": []}
+
+    def responder_sonda(pedido: httpx.Request) -> httpx.Response:
+        if pedido.url.host in sondas["fora"]:
+            raise httpx.ConnectError("fora do ar")
+        if pedido.url.path == "/api/queues":
+            return httpx.Response(200, json=sondas["filas"])
+        return httpx.Response(200)
+
+    cliente_sondas = httpx.AsyncClient(transport=httpx.MockTransport(responder_sonda))
     painel = criar_painel(
         cliente_api,
         cliente_busca,
-        ConfigPainel(cookie_seguro=False, conhecimento_dir=tmp_path),
+        ConfigPainel(
+            cookie_seguro=False,
+            conhecimento_dir=tmp_path,
+            backups_dir=tmp_path / "backups",
+            mcp_clinica_url="http://mcp-clinica:8000",
+            mcp_conhecimento_url="http://mcp-conhecimento:8000",
+            livekit_url="http://livekit:7880",
+            agente_url="http://agente:8081",
+            rabbit_gerencia_url="http://rabbitmq:15672",
+            api_url="http://api",
+        ),
         eventos,
         indexacao,
+        cliente_sondas,
     )
     yield Ambiente(
         api,
@@ -128,9 +150,11 @@ async def ambiente(banco: str, tmp_path: Path) -> AsyncIterator[Ambiente]:
         indexacao,
         tmp_path,
         busca_erro,
+        sondas,
     )
     await cliente_api.aclose()
     await cliente_busca.aclose()
+    await cliente_sondas.aclose()
     await api.state.engine.dispose()
 
 

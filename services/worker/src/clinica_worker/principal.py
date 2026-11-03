@@ -17,6 +17,7 @@ from clinica_core.config import (
 from clinica_core.db import criar_engine, criar_fabrica_sessoes
 from clinica_core.embeddings import GeminiEmbeddings, GeradorEmbeddings
 from clinica_core.eventos import publicar_eventos
+from clinica_core.logs import configurar_logs
 from clinica_core.mensageria import (
     FILA_CHAMADA_ENCERRADA,
     FILA_CONHECIMENTO_INDEXAR,
@@ -131,7 +132,7 @@ async def rodar(
 
 
 async def _principal() -> None:
-    logging.basicConfig(level=logging.INFO)
+    configurar_logs("worker")
     parar = asyncio.Event()
     laco = asyncio.get_running_loop()
     for sinal in (signal.SIGTERM, signal.SIGINT):

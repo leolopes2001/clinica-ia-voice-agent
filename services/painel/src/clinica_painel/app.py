@@ -14,7 +14,15 @@ from starlette.middleware.sessions import SessionMiddleware
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from clinica_core.config import ConfigRabbit
-from clinica_painel import agenda, cadastros, configuracoes, conhecimento, contas, operacao
+from clinica_painel import (
+    agenda,
+    cadastros,
+    configuracoes,
+    conhecimento,
+    contas,
+    operacao,
+    saude_sistema,
+)
 from clinica_painel.api import ErroDaApi
 from clinica_painel.config import ConfigPainel
 from clinica_painel.eventos import Distribuidor, FonteDeEventos
@@ -79,9 +87,11 @@ def criar_app(
     config: ConfigPainel | None = None,
     eventos: FonteDeEventos | None = None,
     indexacao: conhecimento.PublicadorDeIndexacao | None = None,
+    sondas: httpx.AsyncClient | None = None,
 ) -> FastAPI:
     configuracao = config or ConfigPainel()
     fonte = eventos or Distribuidor()
+    cliente_de_sondas = sondas or httpx.AsyncClient()
 
     @asynccontextmanager
     async def ciclo_de_vida(_: FastAPI) -> AsyncIterator[None]:
@@ -90,6 +100,7 @@ def criar_app(
         await fonte.fechar()
         await api.aclose()
         await busca.aclose()
+        await cliente_de_sondas.aclose()
 
     app = FastAPI(
         title="Clínica Voz: painel", lifespan=ciclo_de_vida, docs_url=None, redoc_url=None
@@ -97,6 +108,7 @@ def criar_app(
     app.state.api = api
     app.state.busca = busca
     app.state.config = configuracao
+    app.state.sondas = cliente_de_sondas
     app.state.eventos = fonte
     app.state.indexacao = indexacao or conhecimento.PublicadorRabbit(ConfigRabbit())
 
@@ -125,6 +137,7 @@ def criar_app(
     app.include_router(conhecimento.router)
     app.include_router(operacao.router)
     app.include_router(configuracoes.router)
+    app.include_router(saude_sistema.router)
     app.include_router(cadastros.router)
 
     @app.get("/saude")

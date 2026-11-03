@@ -4,6 +4,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from clinica_core.config import ConfigEmbeddings, ConfigPostgres
 from clinica_core.db import criar_engine
 from clinica_core.embeddings import CacheDePerguntas, GeminiEmbeddings
+from clinica_core.logs import configurar_logs
 from clinica_mcp_conhecimento.servidor import criar_app
 
 _TENTATIVAS_EMBEDDING = 2
@@ -20,6 +21,7 @@ class ConfigMcpConhecimento(BaseSettings):
 
 
 def main() -> None:
+    configurar_logs("mcp-conhecimento")
     # O paciente está esperando na linha: falha rápido e cai na busca só por texto.
     gerador = CacheDePerguntas(
         GeminiEmbeddings(
@@ -28,7 +30,7 @@ def main() -> None:
         _PERGUNTAS_EM_CACHE,
     )
     app = criar_app(criar_engine(ConfigPostgres()), gerador)
-    uvicorn.run(app, host="0.0.0.0", port=ConfigMcpConhecimento().porta)
+    uvicorn.run(app, host="0.0.0.0", port=ConfigMcpConhecimento().porta, log_config=None)
 
 
 if __name__ == "__main__":

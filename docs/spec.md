@@ -430,7 +430,7 @@ São 7 fases, cada uma terminando em algo que roda e pode ser testado. As fases 
 
 - [x] T6.1 Retenção automática de transcrições e texto de consentimento revisado. A retenção só pode apagar a transcrição de uma chamada ligada a uma consulta de voz: a FK e o CHECK `voz_exige_chamada` impedem apagar a chamada ou anular `chamada_id`. O telefone segue o mesmo prazo (`RETENCAO_TRANSCRICAO_DIAS`), em toda chamada, como decidido pelo usuário em 02/11/2026.
 - [x] T6.2 Backup diário do Postgres (`pg_dump` num volume e cópia externa).
-- [ ] T6.3 Logs estruturados e um painel simples de saúde (serviços, filas, chamadas ativas).
+- [x] T6.3 Logs estruturados e um painel simples de saúde (serviços, filas, chamadas ativas).
 - [ ] T6.4 Runbook: o que fazer se cair a internet, o gateway ou a API do Gemini.
 - [ ] T6.5 Trocar as senhas padrão de desenvolvimento do Compose (Postgres e RabbitMQ) antes de usar em produção.
 
@@ -472,6 +472,7 @@ O que o código já cobre com fakes, mas só pode ser confirmado com crédito do
 - [ ] T5.4: enviar um PDF, um DOCX e um TXT pelo painel, ver o status ir de `processando` a `pronto` e testar uma pergunta na tela. Indexar gasta crédito de embeddings. Sem crédito, o documento vai para `erro`, e a busca funciona só por texto.
 - [ ] T5.6: fazer ligações de teste com cada voz que você considerar, conferir se o modelo aceita o nome e escolher pelo ouvido. Conferir também se a saudação configurada no painel é falada e se, fora do horário, o agente avisa e registra o pedido de retorno.
 - [ ] Ouvir o novo texto do consentimento numa ligação: ele ficou mais longo, e o paciente pode interromper. Conferir se o agente fala o prazo certo.
+- [ ] T6.3: fazer uma ligação com a stack real e conferir com `docker compose logs agent` se os logs não trazem falas nem dados do paciente. Os testes cobrem só os filtros: os textos reais do ADK dependem de uma conversa de verdade.
 
 ### Com o gateway e a telefonia
 
@@ -581,3 +582,5 @@ Decisões técnicas tomadas durante a implementação, com a opção mais conser
 | T6.1 | Texto do consentimento escolhido pelo usuário em 02/11/2026: diz que é uma inteligência artificial, a finalidade, o prazo em dias e a alternativa de quem recusa. O prazo falado vem de `RETENCAO_TRANSCRICAO_DIAS`, pela API. | Se o prazo mudar, o agente fala o valor certo, sem editar o prompt. |
 | T6.2 | Serviço novo `backup`, com a imagem do Postgres e um script. Roda `pg_dump` às 03:30 e ao subir, se não houver backup das últimas 24 h, e confere se o dump abre. Também guarda os arquivos da base de conhecimento. Mantém 14 dias, com `BACKUP_RETENCAO_DIAS`. O health check só fica saudável com um backup bom de até 26 h. | Sem os arquivos, um banco restaurado não permitiria reindexar nada. Máquina desligada à noite não fica sem backup. |
 | T6.2 | A cópia externa só sai criptografada (AES-256, `openssl`), com `BACKUP_SENHA`, para a pasta de `BACKUP_DESTINO_EXTERNO`. Sem senha, não há cópia externa, e a situação aparece na tela de saúde. A restauração usa sempre um banco novo e não toca no banco em uso. Foi testada de ponta a ponta num Postgres novo, em 02/11/2026. | O dump tem dados de saúde. Transcrições apagadas continuam nos backups por até 14 dias: esse é o prazo real de eliminação. |
+| T6.3 | Logs em JSON, uma linha por evento, em todos os serviços Python (`clinica_core.logs`). O log de acesso fica desligado, e `httpx`, `google_adk`, `google_genai` e `mcp` só registram avisos. | A URL traz a busca por nome de paciente, e esses registros podem trazer a conversa: um log não pode virar uma cópia dos dados, fora da retenção. |
+| T6.3 | A tela "Saúde" é só para administradores e relê a cada 30 s. Mostra serviços, filas, chamadas ativas (sem fim há menos de 4 h) e o último backup. Alerta sobre mensagens em DLQ, worker sem consumir, backup com falha, cópia externa desligada e senhas de desenvolvimento em uso. Não testa o Gemini. | Uma sonda ao Gemini gastaria crédito a cada 30 s. O runbook explica como notar esse caso pelos logs e pelo saldo. |

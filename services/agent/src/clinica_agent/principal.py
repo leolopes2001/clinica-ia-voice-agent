@@ -23,6 +23,7 @@ from clinica_agent.recepcionista import criar_agente
 from clinica_agent.resumo import resumir
 from clinica_agent.trava import TravaDeConfirmacao
 from clinica_core.config import ConfigRabbit, ConfigSessoesAdk, ConfigTokens
+from clinica_core.logs import configurar_logs
 
 logger = logging.getLogger(__name__)
 
@@ -179,6 +180,6 @@ async def atender(ctx: JobContext) -> None:
 
 
 def main() -> None:
-    logging.basicConfig(level=logging.INFO)
+    configurar_logs("agent")
     asyncio.run(_preparar_banco_de_sessoes())
     cli.run_app(server)
