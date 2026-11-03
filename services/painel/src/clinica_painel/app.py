@@ -14,7 +14,7 @@ from starlette.middleware.sessions import SessionMiddleware
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from clinica_core.config import ConfigRabbit
-from clinica_painel import agenda, cadastros, conhecimento, contas
+from clinica_painel import agenda, cadastros, conhecimento, contas, operacao
 from clinica_painel.api import ErroDaApi
 from clinica_painel.config import ConfigPainel
 from clinica_painel.eventos import Distribuidor, FonteDeEventos
@@ -123,6 +123,7 @@ def criar_app(
     app.include_router(contas.router)
     app.include_router(agenda.router)
     app.include_router(conhecimento.router)
+    app.include_router(operacao.router)
     app.include_router(cadastros.router)
 
     @app.get("/saude")

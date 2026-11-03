@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+{% block titulo %}Pedidos de retorno{% endblock %}
+{% block conteudo %}
+<h1>Pedidos de retorno</h1>
+<p class="discreto">Pessoas que pediram, durante a ligação, para a clínica retornar.</p>
+<div class="rolagem"><table>
+  <thead><tr><th>Quando</th><th>Protocolo</th><th>Telefone</th><th>Motivo</th><th>Status</th><th></th></tr></thead>
+  <tbody>
+  {% for r in retornos %}
+    <tr>
+      <td>{{ r.criado_em|data_hora(sessao.fuso) }}</td><td>{{ r.protocolo }}</td>
+      <td>{{ r.telefone or 'Não disponível' }}</td><td>{{ r.motivo or '—' }}</td>
+      <td><span class="selo {{ r.status }}">{{ r.status }}</span></td>
+      <td>{% if r.status == 'pendente' %}
+        <form method="post" action="/retornos/{{ r.id }}/concluir"><button class="link">Concluir</button></form>
+      {% endif %}</td>
+    </tr>
+  {% else %}<tr><td colspan="6">Nenhum pedido.</td></tr>{% endfor %}
+  </tbody>
+</table></div>
+{% endblock %}

@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block titulo %}Chamadas{% endblock %}
+{% block conteudo %}
+<h1>Chamadas</h1>
+<form method="get" class="filtros">
+  <label>Desfecho
+    <select name="desfecho" onchange="this.form.submit()">
+      <option value="">Todos</option>
+      {% for v, r in desfechos.items() %}<option value="{{ v }}" {{ 'selected' if v == desfecho }}>{{ r }}</option>{% endfor %}
+    </select>
+  </label>
+  <noscript><button>Filtrar</button></noscript>
+</form>
+<div class="rolagem"><table>
+  <thead><tr><th>Início</th><th>Telefone</th><th>Duração</th><th>Desfecho</th><th>Consentimento</th><th>Transcrição</th></tr></thead>
+  <tbody>
+  {% for c in chamadas %}
+    <tr>
+      <td><a href="/chamadas/{{ c.id }}">{{ c.inicio|data_hora(sessao.fuso) }}</a></td>
+      <td>{{ c.telefone or 'Não disponível' }}</td>
+      <td>{% if c.duracao_s is not none %}{{ c.duracao_s // 60 }} min {{ c.duracao_s % 60 }} s{% else %}Em andamento{% endif %}</td>
+      <td>{{ desfechos.get(c.desfecho, '—') }}</td>
+      <td>{{ 'Aceitou' if c.consentiu else ('Recusou' if c.recusou else 'Sem resposta') }}</td>
+      <td>{{ 'Sim' if c.tem_transcricao else 'Não' }}</td>
+    </tr>
+  {% else %}<tr><td colspan="6">Nenhuma chamada.</td></tr>{% endfor %}
+  </tbody>
+</table></div>
+<p class="discreto">As 200 chamadas mais recentes. Telefone "Não disponível": número oculto ou prazo de retenção vencido.</p>
+{% endblock %}
