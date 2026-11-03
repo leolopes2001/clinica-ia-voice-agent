@@ -3,7 +3,15 @@ name = "clinica-painel"
 version = "0.1.0"
 description = "Painel administrativo da clínica"
 requires-python = ">=3.12,<3.13"
-dependencies = ["clinica-core[rabbit]"]
+dependencies = [
+    "clinica-core[rabbit]",
+    "fastapi",
+    "httpx",
+    "itsdangerous",
+    "jinja2",
+    "python-multipart",
+    "uvicorn",
+]
 
 [build-system]
 requires = ["uv_build>=0.12.1,<0.13"]

@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+{% block titulo %}{{ cadastro.titulo }}{% endblock %}
+{% block conteudo %}
+<h1>{{ cadastro.titulo }}</h1>
+{% for a in avisos %}<p class="alerta" role="status">{{ a }}</p>{% endfor %}
+{% if erro %}<p class="erro" role="alert">{{ erro }}</p>{% endif %}
+<div class="duas-colunas">
+  <section>
+    {% if cadastro.filtro_de_busca %}
+    <form method="get" class="busca">
+      <input type="search" name="busca" value="{{ busca }}" placeholder="Nome ou telefone" aria-label="Buscar">
+      <button>Buscar</button>
+    </form>
+    {% endif %}
+    <div class="rolagem"><table>
+      <thead><tr>
+        {% for c in cadastro.campos if c.na_tabela %}<th>{{ c.rotulo }}</th>{% endfor %}<th></th>
+      </tr></thead>
+      <tbody>
+      {% for r in registros %}
+        <tr>
+          {% for c in cadastro.campos if c.na_tabela %}
+          <td>{% set v = r.get(c.nome + '_texto', r.get(c.nome)) %}
+            {%- if v is sameas true %}Sim{% elif v is sameas false %}Não
+            {%- elif v is iterable and v is not string %}{{ v|join(', ') }}
+            {%- elif v is none %}—{% else %}{{ v }}{% endif -%}
+          </td>
+          {% endfor %}
+          <td class="acoes">
+            <a href="/cadastros/{{ cadastro.rota }}/{{ r.id }}">Editar</a>
+            {% if cadastro.pode_apagar %}
+            <form method="post" action="/cadastros/{{ cadastro.rota }}/{{ r.id }}/apagar" onsubmit="return confirm('Apagar este registro?')">
+              <button class="link perigo">Apagar</button>
+            </form>
+            {% endif %}
+          </td>
+        </tr>
+      {% else %}<tr><td colspan="{{ cadastro.campos|length + 1 }}">Nada cadastrado{% if busca %} com essa busca{% endif %}.</td></tr>{% endfor %}
+      </tbody>
+    </table></div>
+  </section>
+  <section class="cartao">
+    <h2>{{ 'Editar' if registro and registro.get('id') else 'Novo' }} {{ cadastro.singular }}</h2>
+    <form method="post" action="/cadastros/{{ cadastro.rota }}{{ '/' ~ registro.id if registro and registro.get('id') else '' }}">
+      {% for campo in cadastro.campos %}
+        {% set editando = registro and registro.get('id') %}
+        {% if not (campo.so_ao_editar and not editando) and not (campo.so_ao_criar and editando) %}
+          {% include "_campo.html" %}
+        {% endif %}
+      {% endfor %}
+      <button>Salvar</button>
+      {% if registro and registro.get('id') %}<a href="/cadastros/{{ cadastro.rota }}">Cancelar</a>{% endif %}
+    </form>
+  </section>
+</div>
+{% endblock %}

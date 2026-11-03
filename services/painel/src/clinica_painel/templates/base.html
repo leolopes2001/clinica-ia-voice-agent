@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block titulo %}Painel{% endblock %} · {{ sessao.get('clinica', 'Clínica') }}</title>
+  <link rel="stylesheet" href="/static/painel.css">
+  <script src="/static/htmx.min.js" defer></script>
+</head>
+<body>
+{% if sessao.get('usuario_id') %}
+<header class="topo">
+  <strong class="marca">{{ sessao.clinica }}</strong>
+  <nav>
+    <a href="/agenda">Agenda</a>
+    <a href="/cadastros/pacientes">Pacientes</a>
+    <a href="/retornos">Retornos</a>
+    {% if sessao.perfil == 'admin' %}
+    <a href="/cadastros/dentistas">Dentistas</a>
+    <a href="/cadastros/grade">Grade</a>
+    <a href="/cadastros/procedimentos">Procedimentos</a>
+    <a href="/cadastros/consultorios">Consultórios</a>
+    <a href="/cadastros/bloqueios">Bloqueios</a>
+    <a href="/conhecimento">Conhecimento</a>
+    <a href="/chamadas">Chamadas</a>
+    <a href="/cadastros/usuarios">Usuários</a>
+    <a href="/configuracoes">Configurações</a>
+    <a href="/auditoria">Auditoria</a>
+    <a href="/saude-do-sistema">Saúde</a>
+    {% endif %}
+  </nav>
+  <div class="conta">
+    <a href="/minha-senha">{{ sessao.email }}</a>
+    <form method="post" action="/sair"><button class="link">Sair</button></form>
+  </div>
+</header>
+{% endif %}
+<main>
+  {% block conteudo %}{% endblock %}
+</main>
+</body>
+</html>

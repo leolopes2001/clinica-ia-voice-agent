@@ -1,0 +1,6 @@
+{% if incompleto %}<p class="discreto">Escolha o procedimento, o dentista e o dia.</p>
+{% else %}
+{% for h in horarios %}
+<label class="opcao"><input type="radio" name="inicio" value="{{ h.inicio }}" required> {{ h.inicio|hora(sessao.fuso) }}</label>
+{% else %}<p class="alerta">Nenhum horário livre neste dia.</p>{% endfor %}
+{% endif %}

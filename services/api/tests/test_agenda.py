@@ -1,6 +1,6 @@
 import asyncio
 from collections import Counter
-from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
+from collections.abc import AsyncIterator, Awaitable, Callable, Generator, Sequence
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta
 from typing import Any
@@ -17,7 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from clinica_api.app import criar_app
 from clinica_api.publicacao import PublicadorRabbit
 from clinica_api.travas import travar
-from clinica_core.config import ConfigAgenda, ConfigPostgres, ConfigRabbit
+from clinica_core.config import ConfigAgenda, ConfigPostgres, ConfigRabbit, ConfigTokens
 from clinica_core.db import criar_fabrica_sessoes
 from clinica_core.eventos import EventoAgendamento
 from clinica_core.mensageria import abrir_canal, conectar, declarar_fila_painel
@@ -35,6 +35,20 @@ from clinica_core.modelos import (
 )
 
 FUSO = ZoneInfo("America/Sao_Paulo")
+
+
+class _TokenDoContexto(httpx.Auth):
+    """O token que cada serviço usa: chamada é do mcp-clinica, o resto é do painel."""
+
+    def auth_flow(self, request: httpx.Request) -> Generator[httpx.Request, httpx.Response]:
+        tokens = ConfigTokens()
+        cabecalho = (
+            tokens.cabecalho_servicos
+            if "X-Chamada-Id" in request.headers
+            else tokens.cabecalho_painel
+        )
+        request.headers.update(cabecalho)
+        yield request
 
 
 @dataclass
@@ -90,7 +104,9 @@ async def app(banco: str, publicador: PublicadorFalso) -> AsyncIterator[FastAPI]
 @pytest.fixture
 async def cliente(app: FastAPI) -> AsyncIterator[httpx.AsyncClient]:
     transporte = httpx.ASGITransport(app=app)
-    async with httpx.AsyncClient(transport=transporte, base_url="http://api") as cliente:
+    async with httpx.AsyncClient(
+        transport=transporte, base_url="http://api", auth=_TokenDoContexto()
+    ) as cliente:
         yield cliente
 
 
@@ -396,7 +412,9 @@ async def test_duracao_do_hold_vem_da_configuracao(
         ConfigAgenda(antecedencia_minima_min=0, duracao_hold_min=5),
     )
     transporte = httpx.ASGITransport(app=app)
-    async with httpx.AsyncClient(transport=transporte, base_url="http://api") as cliente:
+    async with httpx.AsyncClient(
+        transport=transporte, base_url="http://api", auth=_TokenDoContexto()
+    ) as cliente:
         hold = await _ler(fabrica, await _hold(cliente, c, c.painel))
     await app.state.engine.dispose()
     assert hold.expira_em is not None
@@ -489,7 +507,9 @@ async def test_antecedencia_minima_torna_indisponivel(
 ) -> None:
     app = criar_app(ConfigPostgres(db=banco), ConfigAgenda(antecedencia_minima_min=60 * 24 * 60))
     transporte = httpx.ASGITransport(app=app)
-    async with httpx.AsyncClient(transport=transporte, base_url="http://api") as cliente:
+    async with httpx.AsyncClient(
+        transport=transporte, base_url="http://api", auth=_TokenDoContexto()
+    ) as cliente:
         resposta = await _segurar(cliente, c, c.painel)
     await app.state.engine.dispose()
     assert resposta.status_code == 409
@@ -586,7 +606,9 @@ async def test_duracao_publicada_vem_da_configuracao(banco: str, c: Cenario) -> 
         publicador,
     )
     transporte = httpx.ASGITransport(app=app)
-    async with httpx.AsyncClient(transport=transporte, base_url="http://api") as cliente:
+    async with httpx.AsyncClient(
+        transport=transporte, base_url="http://api", auth=_TokenDoContexto()
+    ) as cliente:
         await _hold(cliente, c, c.painel)
     await app.state.engine.dispose()
     assert [duracao for _, duracao in publicador.holds] == [timedelta(minutes=5)]
@@ -638,7 +660,9 @@ async def test_mensagem_so_e_publicada_depois_do_commit(
     observador = Observador()
     app = criar_app(ConfigPostgres(db=banco), ConfigAgenda(antecedencia_minima_min=0), observador)
     transporte = httpx.ASGITransport(app=app)
-    async with httpx.AsyncClient(transport=transporte, base_url="http://api") as cliente:
+    async with httpx.AsyncClient(
+        transport=transporte, base_url="http://api", auth=_TokenDoContexto()
+    ) as cliente:
         await _hold(cliente, c, c.painel)
     await app.state.engine.dispose()
     assert observador.status == "segurado"
@@ -855,7 +879,9 @@ async def test_eventos_so_saem_depois_do_commit(banco: str, c: Cenario, fabrica:
     observador = Observador()
     app = criar_app(ConfigPostgres(db=banco), ConfigAgenda(antecedencia_minima_min=0), observador)
     transporte = httpx.ASGITransport(app=app)
-    async with httpx.AsyncClient(transport=transporte, base_url="http://api") as cliente:
+    async with httpx.AsyncClient(
+        transport=transporte, base_url="http://api", auth=_TokenDoContexto()
+    ) as cliente:
         consulta = await _consulta(cliente, c)
         novo = await _hold(cliente, c, c.painel, c.h(10))
         await _remarcar(cliente, consulta, novo, c.painel)
@@ -884,7 +910,9 @@ async def test_hold_e_evento_sao_publicados_juntos(
         ConfigPostgres(db=banco), ConfigAgenda(antecedencia_minima_min=0), Dependentes()
     )
     transporte = httpx.ASGITransport(app=app)
-    async with httpx.AsyncClient(transport=transporte, base_url="http://api") as cliente:
+    async with httpx.AsyncClient(
+        transport=transporte, base_url="http://api", auth=_TokenDoContexto()
+    ) as cliente:
         async with asyncio.timeout(5):
             await _hold(cliente, c, c.painel)
     await app.state.engine.dispose()
@@ -901,7 +929,9 @@ async def test_evento_perdido_nao_derruba_a_operacao(
     )
     transporte = httpx.ASGITransport(app=app)
     with caplog.at_level("WARNING"):
-        async with httpx.AsyncClient(transport=transporte, base_url="http://api") as cliente:
+        async with httpx.AsyncClient(
+            transport=transporte, base_url="http://api", auth=_TokenDoContexto()
+        ) as cliente:
             consulta = await _consulta(cliente, c)
             assert (await _cancelar(cliente, consulta, c.painel)).status_code == 200
     await app.state.engine.dispose()
@@ -924,7 +954,9 @@ async def test_painel_recebe_os_eventos_pelo_broker(
     app = criar_app(ConfigPostgres(db=banco), ConfigAgenda(antecedencia_minima_min=0), publicador)
     transporte = httpx.ASGITransport(app=app)
     try:
-        async with httpx.AsyncClient(transport=transporte, base_url="http://api") as cliente:
+        async with httpx.AsyncClient(
+            transport=transporte, base_url="http://api", auth=_TokenDoContexto()
+        ) as cliente:
             consulta = await _consulta(cliente, c)
             novo = await _hold(cliente, c, c.painel, c.h(10))
             await _remarcar(cliente, consulta, novo, c.painel)

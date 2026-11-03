@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% block titulo %}Agenda{% endblock %}
+{% block conteudo %}
+<h1>Agenda</h1>
+<form method="get" action="/agenda" class="filtros">
+  <label>Dia <input type="date" name="dia" value="{{ dia.isoformat() }}" onchange="this.form.submit()"></label>
+  <label>Visão
+    <select name="visao" onchange="this.form.submit()">
+      <option value="dia" {{ 'selected' if visao == 'dia' }}>Dia</option>
+      <option value="semana" {{ 'selected' if visao == 'semana' }}>Semana</option>
+    </select>
+  </label>
+  <label>Dentista
+    <select name="dentista" onchange="this.form.submit()">
+      <option value="">Todos</option>
+      {% for d in dentistas %}<option value="{{ d.id }}" {{ 'selected' if d.id == dentista }}>{{ d.nome }}</option>{% endfor %}
+    </select>
+  </label>
+  <a href="/agenda?dia={{ anterior.isoformat() }}&visao={{ visao }}&dentista={{ dentista }}">‹ Anterior</a>
+  <a href="/agenda?dia={{ hoje.isoformat() }}&visao={{ visao }}&dentista={{ dentista }}">Hoje</a>
+  <a href="/agenda?dia={{ seguinte.isoformat() }}&visao={{ visao }}&dentista={{ dentista }}">Seguinte ›</a>
+  <a href="/agenda/nova"><strong>+ Nova consulta</strong></a>
+  <noscript><button>Ver</button></noscript>
+</form>
+{# O every é a rede de segurança: o evento é só um aviso, e pode se perder. #}
+<div id="grade" hx-get="/agenda/grade?dia={{ dia.isoformat() }}&visao={{ visao }}&dentista={{ dentista }}"
+     hx-trigger="load, atualizar from:body, every 30s" aria-live="polite">
+  <p class="discreto">Carregando…</p>
+</div>
+<script>
+  // Relê ao receber um aviso e ao reconectar: nenhum evento precisa chegar para a agenda ficar certa.
+  const fonte = new EventSource("/agenda/eventos");
+  const avisar = () => document.body.dispatchEvent(new Event("atualizar"));
+  fonte.onmessage = avisar;
+  let abriu = false;
+  fonte.onopen = () => { if (abriu) avisar(); abriu = true; };
+</script>
+{% endblock %}

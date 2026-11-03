@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% block titulo %}Consulta{% endblock %}
+{% block conteudo %}
+<h1>Consulta</h1>
+{% if erro %}<p class="erro" role="alert">{{ erro }}</p>{% endif %}
+<div class="duas-colunas">
+  <section class="cartao">
+    <p><span class="selo {{ consulta.status }}">{{ consulta.status }}</span></p>
+    <p><strong>{{ consulta.inicio|data_hora(sessao.fuso) }}</strong></p>
+    <p>{{ consulta.paciente or 'Horário segurado' }}{% if consulta.telefone %} · {{ consulta.telefone }}{% endif %}</p>
+    <p>{{ consulta.procedimento }} · {{ consulta.dentista }} · {{ consulta.consultorio }}</p>
+    <p class="discreto">Origem: {{ 'ligação' if consulta.origem == 'voz' else 'painel' }}</p>
+    {% if consulta.motivo_cancelamento %}<p class="discreto">Motivo: {{ consulta.motivo_cancelamento }}</p>{% endif %}
+    <p><a href="/agenda">Voltar para a agenda</a></p>
+    {% if consulta.status == 'confirmado' %}
+    <form method="post" action="/agenda/consulta/{{ consulta.id }}/status" class="filtros">
+      <button name="status" value="concluido">Marcar como concluída</button>
+      <button name="status" value="faltou" class="perigo">Marcar falta</button>
+    </form>
+    <h2>Cancelar</h2>
+    <form method="post" action="/agenda/consulta/{{ consulta.id }}/cancelar" onsubmit="return confirm('Cancelar esta consulta?')">
+      <input type="hidden" name="chave" value="{{ chave }}">
+      <label>Motivo (opcional) <input type="text" name="motivo" maxlength="500"></label>
+      <button class="perigo">Cancelar a consulta</button>
+    </form>
+    {% endif %}
+  </section>
+  {% if consulta.status == 'confirmado' %}
+  <section class="cartao">
+    <h2>Remarcar</h2>
+    <p class="discreto">O horário atual só é liberado quando o novo for confirmado. Um novo horário que se sobreponha ao atual não é aceito.</p>
+    <form method="post" action="/agenda/consulta/{{ consulta.id }}/remarcar">
+      <input type="hidden" name="chave" value="{{ chave }}">
+      {% with procedimento_id=consulta.procedimento_id, dentista_id=consulta.dentista_id, data=hoje.isoformat() %}
+        {% include "_escolher_horario.html" %}
+      {% endwith %}
+      <button>Remarcar</button>
+    </form>
+  </section>
+  {% endif %}
+</div>
+{% endblock %}

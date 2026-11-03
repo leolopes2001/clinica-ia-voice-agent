@@ -69,6 +69,25 @@ class ConfigRetencao(BaseSettings):
     transcricao_dias: int = Field(default=90, ge=1)
 
 
+class ConfigTokens(BaseSettings):
+    """Quem pode falar com a API. Padrões de desenvolvimento: troque antes de usar em produção."""
+
+    model_config = SettingsConfigDict(env_prefix="API_TOKEN_", env_file=".env", extra="ignore")
+
+    # Age como a clínica, em nome de um usuário logado.
+    painel: SecretStr = SecretStr("token-do-painel-de-desenvolvimento")
+    # Agente e mcp-clinica: só abrem chamadas e agem dentro de uma chamada.
+    servicos: SecretStr = SecretStr("token-dos-servicos-de-desenvolvimento")
+
+    @property
+    def cabecalho_painel(self) -> dict[str, str]:
+        return {"Authorization": f"Bearer {self.painel.get_secret_value()}"}
+
+    @property
+    def cabecalho_servicos(self) -> dict[str, str]:
+        return {"Authorization": f"Bearer {self.servicos.get_secret_value()}"}
+
+
 class ConfigEmbeddings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 

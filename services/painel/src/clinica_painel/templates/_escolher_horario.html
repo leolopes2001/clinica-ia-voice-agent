@@ -1,0 +1,17 @@
+<div hx-get="/agenda/horarios" hx-target="#horarios" hx-include="closest form"
+     hx-trigger="load, change from:select, change from:input[name=data]">
+  <label>Procedimento
+    <select name="procedimento_id" required>
+      <option value="">Escolha</option>
+      {% for p in procedimentos %}<option value="{{ p.id }}" {{ 'selected' if p.id == procedimento_id }}>{{ p.nome }} ({{ p.duracao_min }} min)</option>{% endfor %}
+    </select>
+  </label>
+  <label>Dentista
+    <select name="dentista_id" required>
+      <option value="">Escolha</option>
+      {% for d in dentistas %}<option value="{{ d.id }}" {{ 'selected' if d.id == dentista_id }}>{{ d.nome }}</option>{% endfor %}
+    </select>
+  </label>
+  <label>Dia <input type="date" name="data" value="{{ data }}" min="{{ hoje.isoformat() }}" required></label>
+</div>
+<fieldset><legend>Horário</legend><div id="horarios"></div></fieldset>

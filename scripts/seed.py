@@ -16,6 +16,7 @@ from sqlalchemy import and_, select
 from sqlalchemy.dialects.postgresql import Range
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from clinica_api.autenticacao import gerar_hash
 from clinica_core.config import ConfigPostgres, ConfigRabbit
 from clinica_core.db import criar_engine, criar_fabrica_sessoes
 from clinica_core.mensageria import (
@@ -36,6 +37,7 @@ from clinica_core.modelos import (
     GradeTrabalho,
     Paciente,
     Procedimento,
+    Usuario,
 )
 
 RAIZ = Path(__file__).resolve().parent.parent
@@ -60,6 +62,12 @@ PACIENTES = [
     ("Carla Mendes", "+5511900000002", date(1980, 7, 25)),
     ("Bruno Mendes", "+5511900000002", date(2014, 11, 3)),
 ]
+# Fictícios e só para desenvolvimento: na clínica, use clinica_api.criar_admin.
+USUARIOS = [
+    ("admin@exemplo.test", "admin"),
+    ("recepcao@exemplo.test", "recepcao"),
+]
+SENHA_DE_EXEMPLO = "senha-de-exemplo"
 _ALVO_DO_DOCUMENTO = "/dados/conhecimento/exemplo"
 
 
@@ -177,6 +185,18 @@ async def _povoar(sessao: AsyncSession) -> tuple[UUID, list[UUID]]:
             nome=nome,
             telefone_e164=telefone,
             data_nascimento=nascimento,
+        )
+
+    senha_hash = gerar_hash(SENHA_DE_EXEMPLO)
+    for email, perfil in USUARIOS:
+        await _obter(
+            sessao,
+            Usuario,
+            Usuario.email == email,
+            clinica_id=cid,
+            email=email,
+            senha_hash=senha_hash,
+            perfil=perfil,
         )
 
     documentos = [

@@ -1,11 +1,13 @@
 import ast
+import subprocess
+import sys
 import tomllib
 from pathlib import Path
 
 import pytest
 
 RAIZ = Path(__file__).resolve().parent.parent
-SERVICOS_SEM_BANCO = ["agent", "mcp_clinica"]
+SERVICOS_SEM_BANCO = ["agent", "mcp_clinica", "painel"]
 # O DatabaseSessionService do ADK precisa do driver (T3.3), com um usuário que só vê as próprias
 # tabelas: ver tests/test_sessoes_adk.py. O código do agente continua sem importar banco.
 DRIVER_PERMITIDO = {"agent": ("asyncpg",)}
@@ -47,7 +49,9 @@ def test_detector_aceita_mensageria() -> None:
 
 @pytest.mark.parametrize("servico", SERVICOS_SEM_BANCO)
 def test_servico_nao_importa_banco(servico: str) -> None:
-    arquivos = list((RAIZ / "services" / servico).rglob("*.py"))
+    pasta = RAIZ / "services" / servico
+    # Os testes do painel sobem a API de verdade, e precisam preparar os dados dela.
+    arquivos = [a for a in pasta.rglob("*.py") if "tests" not in a.relative_to(pasta).parts]
     assert arquivos
     for arquivo in arquivos:
         assert not _imports_proibidos(arquivo.read_text()), arquivo
@@ -62,3 +66,12 @@ def test_servico_nao_declara_dependencia_de_banco(servico: str) -> None:
         assert not dependencia.startswith(("sqlalchemy", "asyncpg")), dependencia
         if dependencia.startswith("clinica-core["):
             assert "db" not in dependencia.split("[")[1], dependencia
+
+
+def test_ler_eventos_nao_carrega_o_banco() -> None:
+    # O painel e o agente não têm o sqlalchemy na imagem, e um import indireto só apareceria nela.
+    codigo = (
+        "import sys, clinica_core.eventos, clinica_core.mensageria, clinica_core.config;"
+        "sys.exit(any(m in sys.modules for m in ('sqlalchemy', 'pgvector')))"
+    )
+    assert subprocess.run([sys.executable, "-c", codigo], check=False).returncode == 0

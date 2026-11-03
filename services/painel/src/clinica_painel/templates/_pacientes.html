@@ -1,0 +1,3 @@
+{% for p in pacientes %}
+<label class="opcao"><input type="radio" name="paciente_id" value="{{ p.id }}" required> {{ p.nome }} · {{ p.telefone_e164 }}</label>
+{% else %}<p class="discreto">Nenhum paciente encontrado. <a href="/cadastros/pacientes">Cadastrar</a></p>{% endfor %}

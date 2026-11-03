@@ -9,10 +9,10 @@ from fastapi import Depends, FastAPI, Header, Query, Request
 from fastapi.responses import JSONResponse
 from pydantic import AwareDatetime
 from sqlalchemy import text
-from sqlalchemy.ext.asyncio import AsyncSession
 
-from clinica_api import agenda, chamadas, voz
+from clinica_api import agenda, chamadas, painel, voz
 from clinica_api.agenda import Contexto, ErroAgenda
+from clinica_api.autenticacao import Sessao, exigir_token, papel_do_token
 from clinica_api.esquemas import (
     AgendamentoCancelado,
     AgendamentoConfirmado,
@@ -48,11 +48,18 @@ from clinica_api.esquemas import (
 )
 from clinica_api.horarios import ProcedimentoNaoEncontrado, listar_horarios_livres
 from clinica_api.publicacao import PublicadorAgenda, PublicadorRabbit
-from clinica_core.config import ConfigAgenda, ConfigPostgres, ConfigRabbit
+from clinica_core.config import ConfigAgenda, ConfigPostgres, ConfigRabbit, ConfigTokens
 from clinica_core.db import criar_engine, criar_fabrica_sessoes
 
 _STATUS_POR_MOTIVO = {
     "contexto_ausente": HTTPStatus.BAD_REQUEST,
+    "nao_autenticado": HTTPStatus.UNAUTHORIZED,
+    "credenciais_invalidas": HTTPStatus.UNAUTHORIZED,
+    "login_bloqueado": HTTPStatus.TOO_MANY_REQUESTS,
+    "token_nao_permitido": HTTPStatus.FORBIDDEN,
+    "sem_permissao": HTTPStatus.FORBIDDEN,
+    "registro_nao_encontrado": HTTPStatus.NOT_FOUND,
+    "telefone_invalido": HTTPStatus.UNPROCESSABLE_ENTITY,
     "exige_chamada": HTTPStatus.BAD_REQUEST,
     "exige_painel": HTTPStatus.BAD_REQUEST,
     "dentista_nao_encontrado": HTTPStatus.NOT_FOUND,
@@ -69,19 +76,25 @@ _STATUS_POR_MOTIVO = {
 }
 
 
-async def _sessao(request: Request) -> AsyncIterator[AsyncSession]:
-    async with request.app.state.fabrica_sessoes() as sessao:
-        yield sessao
-
-
-Sessao = Annotated[AsyncSession, Depends(_sessao)]
-
-
 async def _contexto(
     sessao: Sessao,
+    papel: Annotated[str, Depends(papel_do_token)],
+    x_chamada_id: Annotated[UUID | None, Header()] = None,
+    x_clinica_id: Annotated[UUID | None, Header()] = None,
+    x_usuario_id: Annotated[UUID | None, Header()] = None,
+) -> Contexto:
+    # A voz age dentro de uma chamada; só o painel age em nome da clínica.
+    exigir_token(papel, "servicos" if x_chamada_id is not None else "painel")
+    return await agenda.resolver_contexto(sessao, x_chamada_id, x_clinica_id, x_usuario_id)
+
+
+async def _contexto_de_abertura(
+    sessao: Sessao,
+    _: Annotated[str, Depends(papel_do_token)],
     x_chamada_id: Annotated[UUID | None, Header()] = None,
     x_clinica_id: Annotated[UUID | None, Header()] = None,
 ) -> Contexto:
+    # O agente abre a chamada antes de ela existir, com o token dele.
     return await agenda.resolver_contexto(sessao, x_chamada_id, x_clinica_id)
 
 
@@ -91,6 +104,7 @@ def _config(request: Request) -> ConfigAgenda:
 
 
 ContextoDaRequisicao = Annotated[Contexto, Depends(_contexto)]
+ContextoDeAbertura = Annotated[Contexto, Depends(_contexto_de_abertura)]
 
 
 def _contexto_com_consentimento(contexto: ContextoDaRequisicao) -> Contexto:
@@ -120,6 +134,7 @@ def criar_app(
     config_postgres: ConfigPostgres | None = None,
     config_agenda: ConfigAgenda | None = None,
     publicador: PublicadorAgenda | None = None,
+    config_tokens: ConfigTokens | None = None,
 ) -> FastAPI:
     engine = criar_engine(config_postgres or ConfigPostgres())
     publicador_agenda = publicador or PublicadorRabbit(ConfigRabbit())
@@ -135,6 +150,9 @@ def criar_app(
     app.state.engine = engine
     app.state.fabrica_sessoes = criar_fabrica_sessoes(engine)
     app.state.config_agenda = config_agenda or ConfigAgenda()
+    app.state.config_tokens = config_tokens or ConfigTokens()
+    app.state.publicador = publicador_agenda
+    app.include_router(painel.router)
     app.add_exception_handler(ErroAgenda, _falha)
     app.add_exception_handler(ProcedimentoNaoEncontrado, _procedimento_nao_encontrado)
 
@@ -217,7 +235,7 @@ def criar_app(
             sessao, contexto, agendamento_id, entrada, chave, publicador_agenda
         )
 
-    @app.get("/clinicas")
+    @app.get("/clinicas", dependencies=[Depends(papel_do_token)])
     async def clinicas(sessao: Sessao) -> Clinicas:
         return await chamadas.listar_clinicas(sessao)
 
@@ -225,7 +243,7 @@ def criar_app(
     async def criar_chamada(
         entrada: CriarChamadaEntrada,
         sessao: Sessao,
-        contexto: ContextoDaRequisicao,
+        contexto: ContextoDeAbertura,
         chave: ChaveIdempotencia,
     ) -> ChamadaCriada:
         return await chamadas.criar_chamada(sessao, contexto, entrada, chave)

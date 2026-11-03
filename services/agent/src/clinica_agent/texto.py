@@ -11,6 +11,8 @@ from google.adk.tools.mcp_tool import McpToolset
 from google.adk.tools.mcp_tool.mcp_session_manager import StreamableHTTPConnectionParams
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from clinica_core.config import ConfigTokens
+
 CHAVE_CHAMADA = "chamada_id"
 _INSTRUCAO = """
 Você testa as ferramentas da recepção de uma clínica odontológica, em português do Brasil.
@@ -43,7 +45,9 @@ def cabecalhos_da_chamada(contexto: ReadonlyContext) -> dict[str, str]:
 async def criar_chamada(config: ConfigAgenteTexto, sessao_id: str) -> str:
     if config.clinica_id is None:
         raise RuntimeError("Configure AGENTE_TEXTO_CLINICA_ID com o valor impresso pelo seed")
-    async with httpx.AsyncClient(base_url=config.api_url, timeout=5.0) as api:
+    async with httpx.AsyncClient(
+        base_url=config.api_url, timeout=5.0, headers=ConfigTokens().cabecalho_servicos
+    ) as api:
         resposta = await api.post(
             "/chamadas",
             headers={"X-Clinica-Id": str(config.clinica_id), "Idempotency-Key": sessao_id},
