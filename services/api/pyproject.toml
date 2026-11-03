@@ -3,7 +3,7 @@ name = "clinica-api"
 version = "0.1.0"
 description = "API com as regras de negócio da agenda e dos cadastros"
 requires-python = ">=3.12,<3.13"
-dependencies = ["alembic", "clinica-core[db,rabbit]", "fastapi", "tzdata", "uvicorn"]
+dependencies = ["alembic", "argon2-cffi", "clinica-core[db,rabbit]", "fastapi", "tzdata", "uvicorn"]
 
 [build-system]
 requires = ["uv_build>=0.12.1,<0.13"]

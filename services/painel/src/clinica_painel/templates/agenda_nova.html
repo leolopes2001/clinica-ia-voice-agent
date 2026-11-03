@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+{% block titulo %}Nova consulta{% endblock %}
+{% block conteudo %}
+<section class="cartao estreito">
+  <h1>Nova consulta</h1>
+  {% if erro %}<p class="erro" role="alert">{{ erro }}</p>{% endif %}
+  <form method="post" action="/agenda/nova" onsubmit="this.querySelector('button').disabled = true">
+    <input type="hidden" name="chave" value="{{ chave }}">
+    {% with procedimento_id=valores.get('procedimento_id'), dentista_id=valores.get('dentista_id'), data=valores.get('data', hoje.isoformat()) %}
+      {% include "_escolher_horario.html" %}
+    {% endwith %}
+    <fieldset><legend>Paciente</legend>
+      <input type="search" name="busca" placeholder="Nome ou telefone" aria-label="Buscar paciente"
+             hx-get="/agenda/pacientes" hx-target="#pacientes" hx-trigger="input changed delay:300ms, search">
+      <div id="pacientes"><p class="discreto">Digite para buscar.</p></div>
+    </fieldset>
+    <button>Agendar</button>
+    <a href="/agenda">Voltar</a>
+  </form>
+</section>
+{% endblock %}

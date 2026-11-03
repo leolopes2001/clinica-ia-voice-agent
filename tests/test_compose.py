@@ -13,7 +13,7 @@ IMAGENS = {
     "redis": "redis:7",
     "livekit": "livekit/livekit-server:v1.13.11",
 }
-CONSTRUIDOS = ["api", "worker", "mcp-clinica", "mcp-conhecimento", "agent"]
+CONSTRUIDOS = ["api", "painel", "worker", "mcp-clinica", "mcp-conhecimento", "agent"]
 DOCKERFILES = {servico: servico.replace("-", "_") for servico in CONSTRUIDOS}
 PORTAS = {
     "postgres": {("127.0.0.1", "5432")},
@@ -89,6 +89,22 @@ def test_agente_sem_portas_e_na_rede_do_livekit(configuracao: dict[str, Any]) ->
 
 def test_pagina_de_teste_so_com_perfil(configuracao: dict[str, Any]) -> None:
     assert "teste-navegador" not in configuracao
+
+
+def test_painel_na_8080_so_em_loopback_por_padrao(configuracao: dict[str, Any]) -> None:
+    portas = configuracao["painel"]["ports"]
+    assert [(porta.get("host_ip"), porta["published"]) for porta in portas] == [
+        ("127.0.0.1", "8080")
+    ]
+
+
+def test_painel_recebe_o_volume_da_base_e_nao_o_banco(configuracao: dict[str, Any]) -> None:
+    painel = configuracao["painel"]
+    assert [(v["source"], v["target"]) for v in painel["volumes"]] == [
+        ("conhecimento_arquivos", "/dados/conhecimento")
+    ]
+    assert not [nome for nome in painel["environment"] if nome.startswith("POSTGRES_")]
+    assert "postgres" not in painel["depends_on"]
 
 
 def test_worker_nao_publica_portas(configuracao: dict[str, Any]) -> None:

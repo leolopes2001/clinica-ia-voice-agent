@@ -1,0 +1,15 @@
+<div class="dias">
+{% for titulo, consultas in dias %}
+  <section class="dia">
+    <h2>{{ titulo }}</h2>
+    {% for c in consultas %}
+    <article class="consulta {{ c.status }}">
+      <a href="/agenda/consulta/{{ c.id }}"><strong>{{ c.inicio|hora(sessao.fuso) }}</strong></a>
+      <span class="selo {{ c.status }}">{{ c.status }}</span><br>
+      {{ c.paciente or 'Horário segurado' }}<br>
+      <span class="discreto">{{ c.procedimento }} · {{ c.dentista }} · {{ c.consultorio }}</span>
+    </article>
+    {% else %}<p class="discreto">Nenhuma consulta.</p>{% endfor %}
+  </section>
+{% endfor %}
+</div>

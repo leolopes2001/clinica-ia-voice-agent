@@ -2,18 +2,21 @@ import asyncio
 import logging
 from collections.abc import Sequence
 from datetime import datetime
-from typing import Literal, Self
+from typing import TYPE_CHECKING, Literal, Self
 from uuid import UUID
 
 from aio_pika.abc import AbstractChannel
 from pydantic import BaseModel
 
 from clinica_core.mensageria import LIMITE_PUBLICACAO_S, publicar
-from clinica_core.modelos import Agendamento
+
+# Só para a tipagem: o painel lê eventos e não tem as dependências de banco.
+if TYPE_CHECKING:
+    from clinica_core.modelos import Agendamento
 
 logger = logging.getLogger(__name__)
 
-TipoEvento = Literal["criado", "confirmado", "remarcado", "cancelado", "expirado"]
+TipoEvento = Literal["criado", "confirmado", "remarcado", "cancelado", "expirado", "atualizado"]
 
 
 class EventoAgendamento(BaseModel):
@@ -36,7 +39,7 @@ class EventoAgendamento(BaseModel):
 
 
 def criar_evento(
-    agendamento: Agendamento, tipo: TipoEvento, anterior: EventoAgendamento | None = None
+    agendamento: "Agendamento", tipo: TipoEvento, anterior: EventoAgendamento | None = None
 ) -> EventoAgendamento:
     # Os limites sempre existem: a API só grava [inicio, fim).
     assert agendamento.periodo.lower is not None

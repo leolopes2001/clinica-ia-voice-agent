@@ -65,8 +65,9 @@ services:
       AGENDA_DURACAO_HOLD_MIN: ${AGENDA_DURACAO_HOLD_MIN:-3}
       # A migration cria o usuário das sessões do ADK com esta senha.
       ADK_SESSOES_SENHA: ${ADK_SESSOES_SENHA:-adk_sessoes}
+      API_TOKEN_PAINEL: ${API_TOKEN_PAINEL:-token-do-painel-de-desenvolvimento}
+      API_TOKEN_SERVICOS: ${API_TOKEN_SERVICOS:-token-dos-servicos-de-desenvolvimento}
     ports:
-      # Até a T5.1 a API confia nos headers sem autenticar: só na própria máquina.
       - "127.0.0.1:${API_PORT:-8000}:8000"
     depends_on:
       postgres:
@@ -79,6 +80,43 @@ services:
         - python
         - -c
         - import urllib.request; urllib.request.urlopen('http://localhost:8000/saude')
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+
+  painel:
+    build:
+      context: .
+      dockerfile: services/painel/Dockerfile
+    restart: unless-stopped
+    environment:
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_USER: ${RABBITMQ_USER:-clinica}
+      RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:-clinica}
+      PAINEL_API_URL: http://api:8000
+      PAINEL_MCP_CONHECIMENTO_URL: http://mcp-conhecimento:8000
+      PAINEL_SEGREDO_SESSAO: ${PAINEL_SEGREDO_SESSAO:-segredo-de-sessao-de-desenvolvimento-troque}
+      # Sem HTTPS, o navegador só devolve o cookie seguro em localhost.
+      PAINEL_COOKIE_SEGURO: ${PAINEL_COOKIE_SEGURO:-true}
+      PAINEL_CONHECIMENTO_DIR: /dados/conhecimento
+      API_TOKEN_PAINEL: ${API_TOKEN_PAINEL:-token-do-painel-de-desenvolvimento}
+    ports:
+      # Só na própria máquina. Para a recepção acessar pela rede, veja o runbook.
+      - "${PAINEL_BIND:-127.0.0.1}:${PAINEL_PORTA:-8080}:8080"
+    volumes:
+      - conhecimento_arquivos:/dados/conhecimento
+    depends_on:
+      api:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - import urllib.request; urllib.request.urlopen('http://localhost:8080/saude')
       interval: 5s
       timeout: 5s
       retries: 10
@@ -125,6 +163,7 @@ services:
     restart: unless-stopped
     environment:
       MCP_CLINICA_API_URL: http://api:8000
+      API_TOKEN_SERVICOS: ${API_TOKEN_SERVICOS:-token-dos-servicos-de-desenvolvimento}
     # Sem portas no host: o MCP fica só na rede interna do Docker.
     depends_on:
       api:
@@ -210,6 +249,7 @@ services:
       GOOGLE_API_KEY: ${GOOGLE_API_KEY:-}
       AGENTE_MODELO_VOZ: ${AGENTE_MODELO_VOZ:-gemini-3.1-flash-live-preview}
       AGENTE_API_URL: http://api:8000
+      API_TOKEN_SERVICOS: ${API_TOKEN_SERVICOS:-token-dos-servicos-de-desenvolvimento}
       AGENTE_SILENCIO_FIM_DE_FALA_MS: ${AGENTE_SILENCIO_FIM_DE_FALA_MS:-}
       AGENTE_FRASE_ESPERA_ARQUIVO: /audio/frase_espera.wav
       ADK_SESSOES_HOST: postgres

@@ -22,7 +22,7 @@ from clinica_agent.espera import FraseDeEspera, publicar_frase_de_espera
 from clinica_agent.recepcionista import criar_agente
 from clinica_agent.resumo import resumir
 from clinica_agent.trava import TravaDeConfirmacao
-from clinica_core.config import ConfigRabbit, ConfigSessoesAdk
+from clinica_core.config import ConfigRabbit, ConfigSessoesAdk, ConfigTokens
 
 logger = logging.getLogger(__name__)
 
@@ -137,7 +137,9 @@ async def atender(ctx: JobContext) -> None:
         ctx.job.metadata,
         config.permitir_telefone_de_teste,
     )
-    async with httpx.AsyncClient(base_url=config.api_url, timeout=5.0) as api:
+    async with httpx.AsyncClient(
+        base_url=config.api_url, timeout=5.0, headers=ConfigTokens().cabecalho_servicos
+    ) as api:
         chamada = await abrir_chamada(api, config.clinica_id, telefone, ctx.room.name)
 
     servico = DatabaseSessionService(ConfigSessoesAdk().url)

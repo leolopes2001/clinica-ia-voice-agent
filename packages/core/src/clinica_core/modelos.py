@@ -307,6 +307,9 @@ class Usuario(Base):
     email: Mapped[str]
     senha_hash: Mapped[str]
     perfil: Mapped[str]
+    ativo: Mapped[bool] = mapped_column(server_default=text("true"))
+    falhas_de_login: Mapped[int] = mapped_column(server_default=text("0"))
+    bloqueado_ate: Mapped[datetime | None]
 
 
 class Auditoria(Base):

@@ -1,5 +1,5 @@
 import asyncio
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import AsyncIterator, Generator, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta
@@ -17,7 +17,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from clinica_api.app import criar_app as criar_api
-from clinica_core.config import ConfigAgenda, ConfigPostgres
+from clinica_core.config import ConfigAgenda, ConfigPostgres, ConfigTokens
 from clinica_core.eventos import EventoAgendamento
 from clinica_core.modelos import (
     Agendamento,
@@ -52,6 +52,20 @@ FERRAMENTAS = {
     "registrar_pedido_retorno",
 }
 Fabrica = async_sessionmaker[AsyncSession]
+
+
+class _TokenDoContexto(httpx.Auth):
+    """O token que cada serviço usa: chamada é do mcp-clinica, o resto é do painel."""
+
+    def auth_flow(self, request: httpx.Request) -> Generator[httpx.Request, httpx.Response]:
+        tokens = ConfigTokens()
+        cabecalho = (
+            tokens.cabecalho_servicos
+            if "X-Chamada-Id" in request.headers
+            else tokens.cabecalho_painel
+        )
+        request.headers.update(cabecalho)
+        yield request
 
 
 class PublicadorFalso:
@@ -98,7 +112,9 @@ def fabrica(api: FastAPI) -> Fabrica:
 @pytest.fixture
 async def http_api(api: FastAPI) -> AsyncIterator[httpx.AsyncClient]:
     transporte = httpx.ASGITransport(app=api)
-    async with httpx.AsyncClient(transport=transporte, base_url="http://api") as cliente:
+    async with httpx.AsyncClient(
+        transport=transporte, base_url="http://api", auth=_TokenDoContexto()
+    ) as cliente:
         yield cliente
 
 

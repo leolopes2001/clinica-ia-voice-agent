@@ -310,7 +310,7 @@ Há um exchange `clinica.eventos` do tipo topic, mais o `clinica.dlx` (direct) p
 
 | Routing key / fila | Produtor | Consumidor | Para quê |
 | --- | --- | --- | --- |
-| `agendamento.*` (criado, confirmado, remarcado, cancelado, expirado) → fila exclusiva e auto-delete, declarada por cada processo do painel ao subir | API e worker | Painel (SSE) | Atualizar a agenda ao vivo. O worker produz `agendamento.expirado` ao expirar pela fila ou pela varredura; a API, na limpeza ao segurar. Sem painel no ar, os eventos são descartados; com várias instâncias, todas recebem |
+| `agendamento.*` (criado, confirmado, remarcado, cancelado, expirado, atualizado) → fila exclusiva e auto-delete, declarada por cada processo do painel ao subir | API e worker | Painel (SSE) | Atualizar a agenda ao vivo. O worker produz `agendamento.expirado` ao expirar pela fila ou pela varredura; a API, na limpeza ao segurar. Sem painel no ar, os eventos são descartados; com várias instâncias, todas recebem |
 | `holds.atraso` (expiração por mensagem) → DLX → `holds.expirar` | API | Worker | Liberar holds vencidos. Uma varredura do worker a cada 60 s, fora do broker, cobre mensagens perdidas |
 | `conhecimento.indexar` | Painel | Worker | Extrair, fatiar, gerar embeddings e gravar |
 | `chamada.encerrada` | Agente | Worker | Gravar transcrição, desfecho e métricas |
@@ -338,7 +338,7 @@ O painel é servido pelo FastAPI com templates Jinja2 e HTMX, e recebe atualiza�
 | `livekit` | `livekit/livekit-server` | 7880, 7881/tcp, faixa UDP de RTC | redis |
 | `livekit-sip` | `livekit/sip` | 5060/udp, 10000–20000/udp (só na LAN) | livekit, redis |
 | `api` | build `./services/api` | `127.0.0.1:${API_PORT:-8000}` | postgres, rabbitmq |
-| `painel` | build `./services/painel` | 8080 | api, rabbitmq |
+| `painel` | build `./services/painel` | `${PAINEL_BIND:-127.0.0.1}:${PAINEL_PORTA:-8080}` | api, rabbitmq |
 | `mcp-clinica` | build `./services/mcp_clinica` | — (rede interna) | api |
 | `mcp-conhecimento` | build `./services/mcp_conhecimento` | — (rede interna) | api, postgres |
 | `agent` | build `./services/agent` | — | livekit, MCPs |
@@ -352,7 +352,7 @@ Como o gateway está na mesma rede local, as portas SIP não precisam ser aberta
 clinica-voz/
 ├── docker-compose.yml
 ├── .env.example
-├── docs/                 # spec.md (este documento), testar-fase2.md, testar-fase3.md
+├── docs/                 # spec.md (este documento), roteiros de teste, validacao-final.md, runbook.md
 ├── exemplos/             # base de conhecimento da clínica fictícia
 ├── infra/                # livekit.yaml, sip.yaml
 ├── scripts/              # bootstrap_sip.sh, seed.py
@@ -418,8 +418,8 @@ São 7 fases, cada uma terminando em algo que roda e pode ser testado. As fases 
 
 **Fase 5 — Painel administrativo**
 
-- [ ] T5.1 Login, perfis e auditoria, mais a autenticação entre o painel e a API, que até lá confia nos headers.
-- [ ] T5.2 Agenda dia/semana com SSE ao vivo, e criar/remarcar/cancelar manual.
+- [x] T5.1 Login, perfis e auditoria, mais a autenticação entre o painel e a API, que até lá confia nos headers.
+- [x] T5.2 Agenda dia/semana com SSE ao vivo, e criar/remarcar/cancelar manual.
 - [ ] T5.3 Cadastros: dentistas, grade, bloqueios, procedimentos, consultórios. O painel avisa quando um procedimento está sem dentista habilitado. Uma migration nova adiciona a `grade_trabalho` exclusion constraints que impedem duas linhas sobrepostas do mesmo dentista no mesmo dia da semana, e o mesmo para o consultório.
 - [ ] T5.4 Base de conhecimento: upload, status de indexação e tela "testar pergunta".
 - [ ] T5.5 Chamadas: lista, transcrição e desfecho.
@@ -472,6 +472,8 @@ O que o código já cobre com fakes, mas só pode ser confirmado com crédito do
 ### Com o gateway e a telefonia
 
 ### Pelo usuário
+- [ ] Decidir como a recepção acessa o painel: na própria máquina do servidor, ou pela rede com `PAINEL_BIND` e HTTPS na frente. Com HTTP puro na rede, a senha trafega aberta.
+- [ ] Na sua máquina, a porta 8080 está ocupada por um processo Java, que não é do projeto. Defina `PAINEL_PORTA=8088` no `.env`, ou libere a 8080, antes de subir o painel.
 
 ## Decisões tomadas pelo agente
 
@@ -549,3 +551,13 @@ Decisões técnicas tomadas durante a implementação, com a opção mais conser
 | T3.7 | O agente toca a frase de um WAV, numa faixa de áudio própria, ao iniciar `buscar_conhecimento`, `listar_horarios_livres` e `listar_meus_agendamentos`, escolhidas pelo usuário em 02/11/2026. Não repete em menos de 10 s, não toca se o modelo falou nos últimos 2 s, e para quando a resposta começa. Sem o arquivo, a ligação segue sem a frase. | O modelo não falava antes da ferramenta. Tocar em paralelo não atrasa a ferramenta, e uma falha no áudio nunca derruba a ligação. |
 | T3.7 | O áudio vem de `scripts/gerar_frase_espera.py`, e o WAV não fica no repositório. `--motor gemini` gasta crédito e ainda não foi rodado; `--motor say` usa a voz do macOS, só para testar o caminho do áudio. O modelo padrão `gemini-3.8-flash-tts` vem da documentação de 02/11/2026. | Gerar pelo Gemini gasta crédito, então a primeira geração fica para a validação. |
 | T3.7 | A fala do paciente só corta a frase depois de fechar a transcrição da pergunta que causou a ferramenta. Antes disso, a frase toca até o fim, por cima dele. | No Gemini 3.x, a transcrição da pergunta chega depois da chamada de ferramenta e cortaria toda frase logo no início. A frase é curta, e é melhor tocá-la inteira do que soar cortada. |
+| T5.1 | A API exige `Authorization: Bearer` em tudo, menos em `/saude`. Há dois tokens: `API_TOKEN_PAINEL`, que age pela clínica sem `X-Chamada-Id`, e `API_TOKEN_SERVICOS` (agente e `mcp-clinica`), que só age dentro de uma chamada e abre chamadas. O painel envia `X-Usuario-Id`, e a API confere no banco a cada pedido se o usuário está ativo e qual é o perfil. | Um serviço interno comprometido não age como a clínica. Desativar um usuário ou mudar o perfil vale na hora, mesmo com a sessão aberta. |
+| T5.1 | O painel não toca no banco: login, regras, perfis e auditoria ficam na API. A sessão é um cookie assinado, `HttpOnly`, `SameSite=Strict`, `Secure` por padrão, com 8 h de duração. Escritas vindas de outra origem são recusadas. | Segue o item 2 da Constituição também no painel. `SameSite` e a checagem de origem cobrem o CSRF, sem token em cada formulário. |
+| T5.1 | Depois de 5 senhas erradas, o usuário fica bloqueado por 15 min. Senhas têm pelo menos 10 caracteres. Migration nova em `usuarios`: `ativo`, `falhas_de_login` e `bloqueado_ate`. Um usuário nunca é apagado, só desativado, porque a auditoria aponta para ele. A clínica sempre fica com um administrador ativo. | A spec pede login com argon2, mas não define os limites. Foi escolhida a opção mais restritiva que não trava a operação. |
+| T5.1 | A auditoria grava na mesma transação da ação. Registra login, tentativas erradas, troca de senha e cada escrita do painel, sem senha nem hash. Nova tela "Auditoria", só para administradores. As ações por voz não entram: `agendamentos.chamada_id` já diz quem agiu. | A Constituição pede auditoria de quem viu e mudou o quê, e um registro que só existe no banco não ajuda a clínica. |
+| T5.1 | O primeiro administrador é criado por `python -m clinica_api.criar_admin`, que pede a senha sem mostrar. O seed cria usuários fictícios só para desenvolvimento. | Nenhuma senha padrão vai para a clínica. |
+| T5.1 | O painel é publicado só em `127.0.0.1:8080` por padrão. `PAINEL_BIND` abre para a rede, e `PAINEL_COOKIE_SEGURO=false` permite HTTP, opções documentadas no runbook. O HTMX fica no repositório, em `static/`, sem CDN. | A rede local sem HTTPS exporia a senha. O painel precisa funcionar sem internet, mesmo quando o Gemini está fora. |
+| T5.2 | A tela da agenda é uma parte HTML que o HTMX busca de novo a cada aviso do SSE, ao reconectar e a cada 30 s. O SSE leva só o tipo do evento, e só para páginas da mesma clínica. Sem `hx-boost`: a navegação é comum, para não sobrar conexão de SSE entre páginas. | A decisão da T1.6 pede para reler do banco, sem depender da ordem nem da entrega dos eventos. Os 30 s cobrem um evento perdido ou o broker fora do ar. |
+| T5.2 | Agendar pelo painel segura e confirma no mesmo envio. A recepção escolhe o horário entre os livres e o paciente por busca. Reenviar o formulário responde "ocupado" e não duplica. A tela de pacientes entrou aqui, porque o agendamento manual precisa dela. | O painel confirma na hora, então não precisa de pausa entre segurar e confirmar. A regra de retry é a da spec: um hold que virou consulta não é devolvido. |
+| T5.2 | A recepção pode marcar uma consulta confirmada como `faltou` ou `concluido`, o que gera o evento novo `agendamento.atualizado`. Paciente não é apagado pelo painel. A auditoria guarda só o id do paciente, nunca nome, telefone ou nascimento. Ver a lista de pacientes grava um registro, sem o termo buscado. Olhar a agenda não grava. | A H8 mostra o status `faltou`, e alguém precisa marcá-lo. Copiar dados pessoais na auditoria burlaria a retenção. Registrar cada atualização automática da agenda encheria a auditoria. |
+| T4.6 | `clinica_core.telefone.normalizar_telefone` veio antes da T4.6, porque o cadastro de pacientes já precisa dela. Aceita o número com ou sem +55, com 0 antes do DDD ou como URI SIP. Sem DDD, ou com "anonymous", devolve vazio: nunca adivinha o DDD. | Um telefone errado identificaria a pessoa errada. É mais seguro tratar como número oculto. |

@@ -42,6 +42,7 @@ O Inspector 2.x exige Node 22.19 ou mais recente, tanto na interface web quanto 
 
 ```bash
 export CHAMADA=$(curl -s -X POST localhost:8001/chamadas \
+  -H "Authorization: Bearer token-dos-servicos-de-desenvolvimento" \
   -H "X-Clinica-Id: $AGENTE_TEXTO_CLINICA_ID" \
   -H "Idempotency-Key: teste-$(date +%s)" \
   -H "Content-Type: application/json" \

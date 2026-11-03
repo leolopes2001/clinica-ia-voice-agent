@@ -11,7 +11,7 @@ from sqlalchemy.dialects.postgresql import Range
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from clinica_api import idempotencia
+from clinica_api import auditoria, idempotencia
 from clinica_api.esquemas import (
     AgendamentoCancelado,
     AgendamentoConfirmado,
@@ -32,7 +32,7 @@ from clinica_api.publicacao import PublicadorAgenda
 from clinica_api.travas import travar
 from clinica_core.config import ConfigAgenda
 from clinica_core.eventos import EventoAgendamento, criar_evento
-from clinica_core.modelos import Agendamento, Chamada, Clinica, Paciente
+from clinica_core.modelos import Agendamento, Chamada, Clinica, Paciente, Usuario
 
 _SQLSTATE_EXCLUSAO = "23P01"
 
@@ -53,6 +53,8 @@ class Contexto:
     paciente_id: UUID | None = None
     identidade_verificada: bool = False
     consentimento: bool = False
+    # Só no painel: quem fez a ação, para a auditoria.
+    usuario_id: UUID | None = None
 
     @property
     def voz(self) -> bool:
@@ -60,16 +62,22 @@ class Contexto:
 
 
 async def resolver_contexto(
-    sessao: AsyncSession, chamada_id: UUID | None, clinica_id: UUID | None
+    sessao: AsyncSession,
+    chamada_id: UUID | None,
+    clinica_id: UUID | None,
+    usuario_id: UUID | None = None,
 ) -> Contexto:
-    contexto = await _ler_contexto(sessao, chamada_id, clinica_id)
+    contexto = await _ler_contexto(sessao, chamada_id, clinica_id, usuario_id)
     # Encerra a leitura: o now() de cada operação não deve vir de antes dela.
     await sessao.commit()
     return contexto
 
 
 async def _ler_contexto(
-    sessao: AsyncSession, chamada_id: UUID | None, clinica_id: UUID | None
+    sessao: AsyncSession,
+    chamada_id: UUID | None,
+    clinica_id: UUID | None,
+    usuario_id: UUID | None,
 ) -> Contexto:
     if chamada_id is not None:
         chamada = await sessao.get(Chamada, chamada_id)
@@ -89,7 +97,13 @@ async def _ler_contexto(
         raise ErroAgenda("contexto_ausente")
     if await sessao.get(Clinica, clinica_id) is None:
         raise ErroAgenda("clinica_nao_encontrada")
-    return Contexto(clinica_id, "painel")
+    if usuario_id is not None:
+        usuario = await sessao.get(Usuario, usuario_id)
+        if usuario is None or not usuario.ativo:
+            raise ErroAgenda("nao_autenticado")
+        if usuario.clinica_id != clinica_id:
+            raise ErroAgenda("contexto_divergente")
+    return Contexto(clinica_id, "painel", usuario_id=usuario_id)
 
 
 @asynccontextmanager
@@ -100,6 +114,19 @@ async def transacao(sessao: AsyncSession) -> AsyncIterator[None]:
     except Exception:
         await sessao.rollback()
         raise
+
+
+def _auditar(sessao: AsyncSession, contexto: Contexto, acao: str, agendamento_id: UUID) -> None:
+    # Na voz, quem agiu já fica em agendamentos.chamada_id.
+    if not contexto.voz:
+        auditoria.registrar(
+            sessao,
+            contexto.clinica_id,
+            contexto.usuario_id,
+            acao,
+            "agendamento",
+            depois={"id": str(agendamento_id)},
+        )
 
 
 def compor_chave(contexto: Contexto, operacao: str, chave: str) -> str:
@@ -236,6 +263,7 @@ async def segurar(
                 )
                 await idempotencia.guardar(sessao, chave_completa, resposta.model_dump(mode="json"))
                 eventos.append(criar_evento(hold, "criado"))
+                _auditar(sessao, contexto, "segurar", hold.id)
 
     # Depois do commit: a mensagem nunca fala de um hold que não foi gravado.
     if resposta is not None:
@@ -341,6 +369,7 @@ async def confirmar(
         resposta = _confirmado(agendamento)
         await idempotencia.guardar(sessao, chave_completa, resposta.model_dump(mode="json"))
         evento = criar_evento(agendamento, "confirmado")
+        _auditar(sessao, contexto, "confirmar", agendamento.id)
 
     await publicador.eventos([evento])
     return resposta
@@ -414,6 +443,7 @@ async def remarcar(
         resposta = _confirmado(novo)
         await idempotencia.guardar(sessao, chave_completa, resposta.model_dump(mode="json"))
         evento = criar_evento(novo, "remarcado", anterior=criar_evento(cancelada, "cancelado"))
+        _auditar(sessao, contexto, "remarcar", novo.id)
 
     await publicador.eventos([evento])
     return resposta
@@ -450,6 +480,7 @@ async def cancelar(
         )
         await idempotencia.guardar(sessao, chave_completa, resposta.model_dump(mode="json"))
         evento = criar_evento(cancelada, "cancelado")
+        _auditar(sessao, contexto, "cancelar", cancelada.id)
 
     await publicador.eventos([evento])
     return resposta

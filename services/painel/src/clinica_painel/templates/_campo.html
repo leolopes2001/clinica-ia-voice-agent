@@ -1,0 +1,24 @@
+{% set valor = registro.get(campo.nome) if registro else none %}
+{% if campo.tipo == 'select' %}
+<label>{{ campo.rotulo }}
+  <select name="{{ campo.nome }}" {{ 'required' if campo.obrigatorio }}>
+    {% if not campo.obrigatorio %}<option value="">{{ campo.ajuda or '—' }}</option>{% endif %}
+    {% for v, r in opcoes[campo.nome] %}<option value="{{ v }}" {{ 'selected' if v == valor }}>{{ r }}</option>{% endfor %}
+  </select>
+</label>
+{% elif campo.tipo == 'multiselect' %}
+<fieldset><legend>{{ campo.rotulo }}</legend>
+  {% for v, r in opcoes[campo.nome] %}
+  <label class="opcao"><input type="checkbox" name="{{ campo.nome }}" value="{{ v }}" {{ 'checked' if valor and v in valor }}> {{ r }}</label>
+  {% else %}<p class="discreto">Nenhuma opção cadastrada.</p>{% endfor %}
+</fieldset>
+{% elif campo.tipo == 'checkbox' %}
+<label class="opcao"><input type="checkbox" name="{{ campo.nome }}" value="1" {{ 'checked' if valor or not registro }}> {{ campo.rotulo }}</label>
+{% else %}
+<label>{{ campo.rotulo }}
+  <input type="{{ 'text' if campo.tipo == 'lista' else campo.tipo }}" name="{{ campo.nome }}"
+    {% if campo.tipo != 'password' and valor is not none %}value="{{ valor|join(', ') if campo.tipo == 'lista' and valor is not string else valor }}"{% endif %}
+    {{ 'required' if campo.obrigatorio }}>
+  {% if campo.ajuda %}<small>{{ campo.ajuda }}</small>{% endif %}
+</label>
+{% endif %}
