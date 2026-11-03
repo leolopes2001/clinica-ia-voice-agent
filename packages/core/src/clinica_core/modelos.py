@@ -327,6 +327,21 @@ class Usuario(Base):
     bloqueado_ate: Mapped[datetime | None]
 
 
+class ConfiguracaoAgente(Base):
+    __tablename__ = "configuracoes_agente"
+    __table_args__ = (
+        CheckConstraint("antecedencia_minima_min >= 0", name="antecedencia_nao_negativa"),
+    )
+
+    clinica_id: Mapped[UUID] = mapped_column(ForeignKey("clinicas.id"), primary_key=True)
+    # Nulo: vale o padrão.
+    saudacao: Mapped[str | None]
+    voz: Mapped[str | None]
+    horario_comercial: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+    numero_transferencia: Mapped[str | None]
+    antecedencia_minima_min: Mapped[int | None]
+
+
 class Auditoria(Base):
     __tablename__ = "auditoria"
 

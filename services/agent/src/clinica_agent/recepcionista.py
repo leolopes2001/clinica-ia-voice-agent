@@ -12,7 +12,7 @@ from google.adk.tools.base_tool import BaseTool
 from google.adk.tools.mcp_tool import McpToolset
 from google.adk.tools.mcp_tool.mcp_session_manager import StreamableHTTPConnectionParams
 
-from clinica_agent.chamada import CHAVE_CHAMADA, ChamadaAberta
+from clinica_agent.chamada import CHAVE_CHAMADA, ChamadaAberta, ConfiguracaoDaLigacao
 from clinica_agent.config import ConfigAgente
 from clinica_agent.espera import FraseDeEspera
 from clinica_agent.trava import TravaDeConfirmacao
@@ -26,6 +26,14 @@ _DIAS_DA_SEMANA = (
     "sexta-feira",
     "sábado",
     "domingo",
+)
+SAUDACAO_PADRAO = "Olá, você ligou para a {clinica}."
+_DENTRO_DO_HORARIO = "Agora a recepção está em horário de atendimento."
+_FORA_DO_HORARIO = (
+    "Agora a recepção está FORA do horário de atendimento: não há quem atenda uma transferência. "
+    "Se a pessoa pedir a recepção, avise que está fora do horário. Com consentimento dado, "
+    "registre um pedido de retorno com `registrar_pedido_retorno` e informe o protocolo. "
+    "Sem consentimento, peça para ligar de novo no horário de atendimento."
 )
 # Tempo para o áudio da despedida tocar: o LiveKitRunner descarta o que falta ao desligar.
 ESPERA_DA_DESPEDIDA_S = 4.0
@@ -84,11 +92,19 @@ def cabecalhos_da_chamada(contexto: ReadonlyContext) -> dict[str, str]:
     return {"X-Chamada-Id": str(contexto.state[CHAVE_CHAMADA])}
 
 
-def montar_prompt(clinica: str, agora: datetime) -> str:
+def montar_prompt(
+    clinica: str, agora: datetime, configuracao: ConfiguracaoDaLigacao | None = None
+) -> str:
+    ligacao = configuracao or ConfiguracaoDaLigacao()
     modelo = files("clinica_agent").joinpath("prompts/recepcionista.md").read_text("utf-8")
     local = agora.astimezone(FUSO)
     hoje = f"{_DIAS_DA_SEMANA[local.weekday()]}, {local:%d/%m/%Y}, {local:%H:%M}"
-    return modelo.replace("{clinica}", clinica).replace("{hoje}", hoje)
+    return (
+        modelo.replace("{saudacao}", ligacao.saudacao or SAUDACAO_PADRAO)
+        .replace("{clinica}", clinica)
+        .replace("{hoje}", hoje)
+        .replace("{horario}", _DENTRO_DO_HORARIO if ligacao.dentro_do_horario else _FORA_DO_HORARIO)
+    )
 
 
 def criar_agente(
@@ -111,7 +127,9 @@ def criar_agente(
         name="recepcionista",
         model=config.modelo_voz,
         # Função, e não texto: o ADK trataria as chaves do prompt como variáveis de estado.
-        instruction=lambda _: montar_prompt(chamada.clinica_nome, datetime.now(FUSO)),
+        instruction=lambda _: montar_prompt(
+            chamada.clinica_nome, datetime.now(FUSO), chamada.configuracao
+        ),
         # A primeira que devolver uma resposta encerra a lista: a frase vem antes e só dispara.
         before_tool_callback=[
             *([frase_de_espera.antes_da_ferramenta] if frase_de_espera else []),

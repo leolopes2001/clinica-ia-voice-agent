@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+{% block titulo %}Configurações do agente{% endblock %}
+{% block conteudo %}
+<h1>Configurações do agente</h1>
+{% if erro %}<p class="erro" role="alert">{{ erro }}</p>{% endif %}
+{% if aviso %}<p class="aviso" role="status">{{ aviso }}</p>{% endif %}
+<p class="discreto">Valem a partir da próxima ligação.</p>
+<form method="post" action="/configuracoes" class="duas-colunas">
+  <section class="cartao">
+    <label>Saudação
+      <input type="text" name="saudacao" maxlength="300" value="{{ c.saudacao or '' }}" placeholder="Olá, você ligou para a {clinica}.">
+      <small>A primeira frase da ligação. {clinica} vira o nome da clínica. O pedido de autorização vem logo depois e não pode ser alterado aqui.</small>
+    </label>
+    <label>Voz
+      <select name="voz">
+        <option value="">Padrão do modelo</option>
+        {% for v in c.vozes %}<option value="{{ v }}" {{ 'selected' if v == c.voz }}>{{ v }}</option>{% endfor %}
+      </select>
+      <small>Ao trocar a voz, gere de novo o áudio da frase de espera, para as duas combinarem.</small>
+    </label>
+    <label>Número de transferência
+      <input type="text" name="numero_transferencia" value="{{ c.numero_transferencia or '' }}" placeholder="11 98888-7777 ou sip:100@192.168.0.20">
+      <small>Para onde vai quem pede a recepção. Vazio: o agente diz que não consegue transferir.</small>
+    </label>
+    <label>Antecedência mínima para agendar (minutos)
+      <input type="number" name="antecedencia_minima_min" min="0" max="43200" value="{{ c.antecedencia_minima_min if c.antecedencia_minima_min is not none else '' }}" placeholder="{{ c.antecedencia_padrao_min }}">
+      <small>Vazio: {{ c.antecedencia_padrao_min }} minutos.</small>
+    </label>
+    <button>Salvar</button>
+  </section>
+  <section class="cartao">
+    <h2>Horário de atendimento da recepção</h2>
+    <p class="discreto">Fora dele, o agente não transfere: avisa e registra um pedido de retorno. Dia em branco: fechado. Tudo em branco: o agente não considera horário nenhum.</p>
+    <table>
+      <thead><tr><th>Dia</th><th>Abre</th><th>Fecha</th></tr></thead>
+      <tbody>
+      {% for i, nome in dias %}
+        {% set faixa = (c.horario_comercial or {}).get(i|string) %}
+        <tr>
+          <td>{{ nome }}</td>
+          <td><input type="time" name="inicio_{{ i }}" aria-label="{{ nome }}, abre" value="{{ faixa.inicio[:5] if faixa else '' }}"></td>
+          <td><input type="time" name="fim_{{ i }}" aria-label="{{ nome }}, fecha" value="{{ faixa.fim[:5] if faixa else '' }}"></td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </section>
+</form>
+{% endblock %}

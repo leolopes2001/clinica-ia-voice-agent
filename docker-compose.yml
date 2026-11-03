@@ -63,6 +63,8 @@ services:
       RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:-clinica}
       AGENDA_ANTECEDENCIA_MINIMA_MIN: ${AGENDA_ANTECEDENCIA_MINIMA_MIN:-120}
       AGENDA_DURACAO_HOLD_MIN: ${AGENDA_DURACAO_HOLD_MIN:-3}
+      # O agente diz este prazo ao pedir o consentimento.
+      RETENCAO_TRANSCRICAO_DIAS: ${RETENCAO_TRANSCRICAO_DIAS:-90}
       # A migration cria o usuário das sessões do ADK com esta senha.
       ADK_SESSOES_SENHA: ${ADK_SESSOES_SENHA:-adk_sessoes}
       API_TOKEN_PAINEL: ${API_TOKEN_PAINEL:-token-do-painel-de-desenvolvimento}

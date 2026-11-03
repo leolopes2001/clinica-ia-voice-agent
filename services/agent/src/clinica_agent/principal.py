@@ -59,9 +59,15 @@ class RunnerObservado(Runner):
                 yield evento
 
 
-def config_de_voz(config: ConfigAgente) -> RunConfig:
+def config_de_voz(config: ConfigAgente, voz: str | None = None) -> RunConfig:
+    # Sem voz escolhida no painel, fica a padrão do modelo.
+    voz_escolhida = (
+        types.VoiceConfig(prebuilt_voice_config=types.PrebuiltVoiceConfig(voice_name=voz))
+        if voz
+        else None
+    )
     return RunConfig(
-        speech_config=types.SpeechConfig(language_code="pt-BR"),
+        speech_config=types.SpeechConfig(language_code="pt-BR", voice_config=voz_escolhida),
         realtime_input_config=types.RealtimeInputConfig(
             automatic_activity_detection=types.AutomaticActivityDetection(
                 silence_duration_ms=config.silencio_fim_de_fala_ms
@@ -160,7 +166,7 @@ async def atender(ctx: JobContext) -> None:
             user_id=USUARIO_ADK,
             session_id=ctx.room.name,
             create_session=False,
-            run_config=config_de_voz(config),
+            run_config=config_de_voz(config, chamada.configuracao.voz),
         ).start()
     finally:
         if frase is not None:

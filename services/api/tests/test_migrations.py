@@ -26,6 +26,7 @@ from clinica_core.modelos import (
 ALEMBIC_INI = Path(__file__).resolve().parent.parent / "alembic.ini"
 SEGURADO_EM = datetime(2026, 12, 3, 14, tzinfo=UTC)
 TABELAS = {
+    "configuracoes_agente",
     "agendamentos",
     "auditoria",
     "bloqueios",

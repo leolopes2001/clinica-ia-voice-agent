@@ -266,7 +266,7 @@ Todas as tabelas, exceto `clinicas` e `idempotencia`, têm `clinica_id` com FK p
 | `idempotencia` | chave, resposta_json, criado_em | Limpeza após 24 h |
 | `usuarios` / `auditoria` | email, senha_hash, perfil / usuario_id, acao, entidade, antes, depois | |
 
-As configurações do agente (T5.6) ganham tabela numa migration própria, nessa tarefa.
+As configurações do agente ficam em `configuracoes_agente` (uma linha por clínica, criada ao salvar no painel): saudação, voz, horário comercial, número de transferência e antecedência mínima. Campo vazio ou linha ausente: vale o padrão.
 
 Horários livres são calculados, não armazenados: grade de trabalho, menos bloqueios, menos agendamentos ativos do dentista ou do consultório. Um hold vencido não ocupa o horário, mesmo antes de o worker marcá-lo como `expirado`. Os candidatos começam sempre em múltiplos de 15 minutos (:00, :15, :30, :45, no fuso da clínica) dentro de cada intervalo livre, e só entram se a duração mais o intervalo de limpeza couberem inteiros. O cálculo descarta os horários que começam antes de agora + `antecedencia_minima_min` (padrão: 120 minutos) e devolve todos os candidatos, em ordem cronológica.
 
@@ -423,7 +423,7 @@ São 7 fases, cada uma terminando em algo que roda e pode ser testado. As fases 
 - [x] T5.3 Cadastros: dentistas, grade, bloqueios, procedimentos, consultórios. O painel avisa quando um procedimento está sem dentista habilitado. Uma migration nova adiciona a `grade_trabalho` exclusion constraints que impedem duas linhas sobrepostas do mesmo dentista no mesmo dia da semana, e o mesmo para o consultório.
 - [x] T5.4 Base de conhecimento: upload, status de indexação e tela "testar pergunta".
 - [x] T5.5 Chamadas: lista, transcrição e desfecho.
-- [ ] T5.6 Configurações do agente, incluindo `antecedencia_minima_min`, que até lá vem das settings (`AGENDA_ANTECEDENCIA_MINIMA_MIN`).
+- [x] T5.6 Configurações do agente, incluindo `antecedencia_minima_min`, que até lá vem das settings (`AGENDA_ANTECEDENCIA_MINIMA_MIN`).
 
 **Fase 6 — Produção local e LGPD**
 
@@ -469,6 +469,7 @@ O que o código já cobre com fakes, mas só pode ser confirmado com crédito do
 - [ ] Gerar o áudio da frase de espera: `uv run python scripts/gerar_frase_espera.py --motor gemini --voz <voz do atendimento>`. Conferir que a voz combina com a do atendimento e refazer se a voz mudar no painel.
 - [ ] T3.7: medir de novo a latência com a frase, separando o primeiro som da resposta de verdade, e decidir a meta de 1,5 s depois de uma ferramenta, que segue em aberto. Conferir se a frase não atropela a resposta e se o corte com a fala do paciente funciona.
 - [ ] T5.4: enviar um PDF, um DOCX e um TXT pelo painel, ver o status ir de `processando` a `pronto` e testar uma pergunta na tela. Indexar gasta crédito de embeddings. Sem crédito, o documento vai para `erro`, e a busca funciona só por texto.
+- [ ] T5.6: fazer ligações de teste com cada voz que você considerar, conferir se o modelo aceita o nome e escolher pelo ouvido. Conferir também se a saudação configurada no painel é falada e se, fora do horário, o agente avisa e registra o pedido de retorno.
 
 ### Com o gateway e a telefonia
 
@@ -567,3 +568,5 @@ Decisões técnicas tomadas durante a implementação, com a opção mais conser
 | T5.4 | O painel salva o arquivo no volume com um nome gerado no servidor, registra o documento na API e publica `conhecimento.indexar`. Aceita até 20 MB. Se o broker estiver fora do ar, o documento vai para `erro`, em vez de ficar em `processando` para sempre, e pode ser indexado de novo. Só textos escritos no painel podem ser editados nele. | O nome do navegador nunca escolhe um caminho no volume. A spec define o painel como produtor de `conhecimento.indexar`, e a decisão da T2.2 pede salvar o texto como arquivo. |
 | T5.4 | A tela "testar pergunta" chama a rota `POST /testar-pergunta` do `mcp-conhecimento`, com o token do painel, e usa a mesma função de busca do agente. Sem o Gemini, ela responde só pela busca por texto. Cada pergunta nova gasta um embedding. | Mostra exatamente o que o agente recebe, sem copiar a busca para outro serviço. O MCP continua só na rede interna. |
 | T5.5 | A tela de chamadas é só para administradores (H11). Ler uma transcrição grava `ver_transcricao` na auditoria, com o id da chamada e sem o texto. Nova tela "Retornos", para recepção e administradores, com o botão de concluir. | A Constituição pede registrar quem viu. A tela de retornos não estava na lista do plano, mas o pedido registrado pelo agente (H7) não chegaria a ninguém sem ela. |
+| T5.6 | A saudação do painel troca só a primeira frase. O pedido de autorização continua no prompt e não pode ser editado. A API diz ao agente, ao atender, se é horário comercial, e isso entra no prompt como fato. O número de transferência não vai ao modelo. Sem horário cadastrado, nada conta como "fora do horário". | Um administrador não remove o consentimento sem querer, e o modelo não decide nem vê o destino da transferência (item 3 da Constituição). |
+| T5.6 | A voz é escolhida numa lista fixa: `Aoede`, `Charon`, `Fenrir`, `Kore`, `Leda`, `Orus`, `Puck` e `Zephyr`. O padrão continua sendo a voz do modelo. A antecedência mínima da tabela vence `AGENDA_ANTECEDENCIA_MINIMA_MIN`, e o campo vazio volta para a variável. | Um nome de voz inválido derrubaria a ligação no Gemini. A lista ainda não foi testada com o modelo escolhido, então está em "Pendente de validação". |
