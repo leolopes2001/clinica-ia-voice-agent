@@ -354,7 +354,9 @@ async def test_antecedencia_minima_descarta_horarios_proximos(
     assert horarios
     limite = agora + timedelta(minutes=120)
     assert all(h.inicio >= limite for h in horarios)
-    assert horarios[0].inicio - limite < timedelta(minutes=15)
+    # Perto da meia-noite, o procedimento não cabe no dia, e o primeiro horário é o do dia seguinte.
+    primeiro = horarios[0].inicio.astimezone(FUSO)
+    assert horarios[0].inicio - limite < timedelta(minutes=15) or primeiro.time() == time.min
 
 
 async def test_sem_antecedencia_nao_devolve_horario_passado(
