@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import signal
+import time
 from pathlib import Path
 
 from aio_pika.abc import AbstractChannel, AbstractIncomingMessage
@@ -20,17 +21,21 @@ from clinica_core.mensageria import (
     FILA_CHAMADA_ENCERRADA,
     FILA_CONHECIMENTO_INDEXAR,
     FILA_HOLDS_EXPIRAR,
+    FILA_MANUTENCAO_DIARIA,
+    ManutencaoDiaria,
     abrir_canal,
     conectar,
     declarar_topologia,
+    publicar,
 )
-from clinica_worker import chamadas, conhecimento
+from clinica_worker import chamadas, conhecimento, manutencao
 from clinica_worker.holds import expirar_vencidos, processar_mensagem
 
 logger = logging.getLogger(__name__)
 
 ARQUIVO_VIVO = Path("/tmp/clinica-worker-vivo")
 INTERVALO_VARREDURA_S = 60.0
+INTERVALO_MANUTENCAO_S = 24 * 3600.0
 
 
 async def _varrer(
@@ -50,6 +55,15 @@ async def _varrer(
     await asyncio.to_thread(arquivo_vivo.touch)
 
 
+async def _agendar_manutencao(canal: AbstractChannel) -> None:
+    """Pela fila, e não direto: uma falha cai na DLQ, onde dá para ver."""
+    try:
+        await publicar(canal, FILA_MANUTENCAO_DIARIA, ManutencaoDiaria())
+    except Exception:
+        # Na próxima rodada tenta de novo. Repetir ao subir não muda nada.
+        logger.exception("Não foi possível agendar a manutenção diária")
+
+
 async def rodar(
     config_postgres: ConfigPostgres,
     config_rabbit: ConfigRabbit,
@@ -58,6 +72,7 @@ async def rodar(
     arquivo_vivo: Path = ARQUIVO_VIVO,
     gerador: GeradorEmbeddings | None = None,
     config_conhecimento: ConfigConhecimento | None = None,
+    intervalo_manutencao_s: float = INTERVALO_MANUTENCAO_S,
 ) -> None:
     engine = criar_engine(config_postgres)
     fabrica = criar_fabrica_sessoes(engine)
@@ -92,8 +107,19 @@ async def rodar(
 
         fila_encerramento = await canal.get_queue(FILA_CHAMADA_ENCERRADA)
         await fila_encerramento.consume(consumir_encerramento)
+
+        async def consumir_manutencao(mensagem: AbstractIncomingMessage) -> None:
+            await manutencao.processar_mensagem(fabrica, retencao, mensagem)
+
+        fila_manutencao = await canal.get_queue(FILA_MANUTENCAO_DIARIA)
+        await fila_manutencao.consume(consumir_manutencao)
+        # Ao subir também: um worker reiniciado toda noite nunca chegaria às 24 h.
+        proxima_manutencao = 0.0
         while not parar.is_set():
             await _varrer(fabrica, canal, arquivo_vivo)
+            if time.monotonic() >= proxima_manutencao:
+                await _agendar_manutencao(canal)
+                proxima_manutencao = time.monotonic() + intervalo_manutencao_s
             try:
                 async with asyncio.timeout(intervalo_s):
                     await parar.wait()

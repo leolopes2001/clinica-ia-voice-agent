@@ -179,7 +179,8 @@ class Chamada(Base):
 
     id: Mapped[UUID] = _id()
     clinica_id: Mapped[UUID] = _clinica_id()
-    telefone: Mapped[str]
+    # Nulo: número oculto, ou prazo de retenção vencido.
+    telefone: Mapped[str | None]
     sala: Mapped[str]
     inicio: Mapped[datetime] = mapped_column(server_default=func.now())
     fim: Mapped[datetime | None]
@@ -254,8 +255,9 @@ class PedidoRetorno(Base):
     clinica_id: Mapped[UUID] = _clinica_id()
     protocolo: Mapped[str]
     chamada_id: Mapped[UUID | None] = mapped_column(ForeignKey("chamadas.id"))
-    telefone: Mapped[str]
-    motivo: Mapped[str]
+    # Nulos depois do prazo de retenção de um pedido concluído.
+    telefone: Mapped[str | None]
+    motivo: Mapped[str | None]
     status: Mapped[str] = mapped_column(server_default="pendente")
     criado_em: Mapped[datetime] = _criado_em()
 

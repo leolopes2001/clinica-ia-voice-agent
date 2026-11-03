@@ -40,6 +40,10 @@ class ChamadaEncerrada(BaseModel):
     transcricao: str | None = None
 
 
+class ManutencaoDiaria(BaseModel):
+    pass
+
+
 async def conectar(config: ConfigRabbit) -> AbstractRobustConnection:
     return await aio_pika.connect_robust(config.url)
 

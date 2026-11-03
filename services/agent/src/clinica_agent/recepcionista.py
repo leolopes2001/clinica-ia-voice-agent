@@ -103,6 +103,7 @@ def montar_prompt(
         modelo.replace("{saudacao}", ligacao.saudacao or SAUDACAO_PADRAO)
         .replace("{clinica}", clinica)
         .replace("{hoje}", hoje)
+        .replace("{retencao_dias}", str(ligacao.retencao_dias))
         .replace("{horario}", _DENTRO_DO_HORARIO if ligacao.dentro_do_horario else _FORA_DO_HORARIO)
     )
 

@@ -68,7 +68,7 @@ Estes são os pontos que os testes automáticos não conseguem avaliar:
 
 - **Qualidade da voz e do português.** Os testes usaram transcrições. Você é a primeira pessoa a ouvir de fato.
 - **Confirmação.** Ao agendar, remarcar ou cancelar, responda "essa mesma" ou "pode ser" à pergunta de confirmação: nada deve mudar, e ela deve pedir um "sim" ou "não". "Sim, não tem problema", "não tem problema" e "sem problema" confirmam.
-- **Texto do consentimento.** É um rascunho, a revisar na T6.1. Veja se soa bem e se não ficou comprido.
+- **Texto do consentimento.** Foi revisado na T6.1 e ainda pede a leitura de um advogado. Veja se soa bem e se não ficou comprido.
 - **Espera depois de uma pergunta.** Dúvidas e ações na agenda levam cerca de 3 s até a resposta, acima da meta de 1,5 s (veja a seção 7).
 - **Datas faladas.** Veja se ela entende bem a data de nascimento e os horários na sua voz.
 
