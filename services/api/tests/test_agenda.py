@@ -10,7 +10,7 @@ from zoneinfo import ZoneInfo
 import httpx
 import pytest
 from fastapi import FastAPI
-from sqlalchemy import delete, func, select, update
+from sqlalchemy import delete, func, select, text, update
 from sqlalchemy.dialects.postgresql import Range
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
@@ -803,6 +803,28 @@ async def test_limpeza_ao_segurar_publica_expirado_antes_do_criado(
     assert evento.inicio == c.h(9)
 
 
+@pytest.fixture
+async def grade_com_consultorio_sobreposto(c: Cenario, fabrica: Fabrica) -> AsyncIterator[None]:
+    """A grade não deixa mais, mas a agenda ainda precisa recusar: é ela que garante o horário."""
+    async with fabrica() as sessao:
+        await sessao.execute(
+            text("ALTER TABLE grade_trabalho DROP CONSTRAINT grade_sem_conflito_consultorio")
+        )
+        await sessao.commit()
+    yield
+    async with fabrica() as sessao:
+        await sessao.execute(delete(GradeTrabalho).where(GradeTrabalho.clinica_id == c.clinica_id))
+        await sessao.execute(
+            text(
+                "ALTER TABLE grade_trabalho ADD CONSTRAINT grade_sem_conflito_consultorio "
+                "EXCLUDE USING gist (consultorio_id WITH =, dia_semana WITH =, "
+                "(tsrange(DATE '2000-01-01' + inicio, DATE '2000-01-01' + fim)) WITH &&)"
+            )
+        )
+        await sessao.commit()
+
+
+@pytest.mark.usefixtures("grade_com_consultorio_sobreposto")
 async def test_limpeza_vale_para_hold_de_outro_dentista_no_consultorio(
     cliente: httpx.AsyncClient, c: Cenario, fabrica: Fabrica, publicador: PublicadorFalso
 ) -> None:
@@ -1528,6 +1550,7 @@ async def test_painel_concorre_com_ligacoes_sob_a_mesma_regra(
     assert _motivos(respostas) == {"ok": 1, "ocupado": 9}
 
 
+@pytest.mark.usefixtures("grade_com_consultorio_sobreposto")
 async def test_consultorio_compartilhado_entre_dentistas(
     cliente: httpx.AsyncClient, c: Cenario, fabrica: Fabrica
 ) -> None:

@@ -10,7 +10,7 @@ from fastapi.responses import JSONResponse
 from pydantic import AwareDatetime
 from sqlalchemy import text
 
-from clinica_api import agenda, chamadas, painel, voz
+from clinica_api import agenda, chamadas, painel, painel_cadastros, voz
 from clinica_api.agenda import Contexto, ErroAgenda
 from clinica_api.autenticacao import Sessao, exigir_token, papel_do_token
 from clinica_api.esquemas import (
@@ -153,6 +153,7 @@ def criar_app(
     app.state.config_tokens = config_tokens or ConfigTokens()
     app.state.publicador = publicador_agenda
     app.include_router(painel.router)
+    app.include_router(painel_cadastros.router)
     app.add_exception_handler(ErroAgenda, _falha)
     app.add_exception_handler(ProcedimentoNaoEncontrado, _procedimento_nao_encontrado)
 
