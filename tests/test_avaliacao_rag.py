@@ -38,7 +38,7 @@ def test_resposta_esperada_esta_no_documento_certo(pergunta: dict[str, str]) -> 
 def gerador() -> GeminiEmbeddings:
     config = ConfigEmbeddings()
     if config.google_api_key is None or not config.google_api_key.get_secret_value():
-        pytest.skip("GOOGLE_API_KEY não configurada: a avaliação usa os embeddings reais")
+        pytest.skip("Usa os embeddings reais e gasta crédito: rode com RODAR_TESTES_GEMINI=1")
     return GeminiEmbeddings(config)
 
 
