@@ -1,3 +1,4 @@
+from pathlib import Path
 from uuid import UUID
 
 from pydantic import SecretStr
@@ -19,6 +20,8 @@ class ConfigAgente(BaseSettings):
     permitir_telefone_de_teste: bool = False
     # Silêncio até o modelo considerar que a pessoa terminou. Vazio: o padrão do Gemini.
     silencio_fim_de_fala_ms: int | None = None
+    # WAV mono de 16 bits, feito por scripts/gerar_frase_espera.py. Sem o arquivo, não há frase.
+    frase_espera_arquivo: Path = Path("infra/audio/frase_espera.wav")
 
 
 class ConfigLiveKit(BaseSettings):

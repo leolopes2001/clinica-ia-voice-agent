@@ -18,6 +18,7 @@ from livekit.agents import AgentServer, AutoSubscribe, JobContext, cli
 from clinica_agent.chamada import CHAVE_CHAMADA, abrir_chamada, telefone_do_chamador
 from clinica_agent.config import ConfigAgente
 from clinica_agent.encerramento import publicar_encerramento
+from clinica_agent.espera import FraseDeEspera, publicar_frase_de_espera
 from clinica_agent.recepcionista import criar_agente
 from clinica_agent.resumo import resumir
 from clinica_agent.trava import TravaDeConfirmacao
@@ -36,16 +37,25 @@ _IDADE_DE_SESSAO_ABANDONADA = timedelta(days=1)
 
 
 class RunnerObservado(Runner):
-    """Entrega à trava cada evento ao vivo, inclusive os parciais, que não entram na sessão."""
+    """Entrega cada evento ao vivo, inclusive os parciais, que não entram na sessão."""
 
-    def __init__(self, *, trava_de_confirmacao: TravaDeConfirmacao, **argumentos: Any) -> None:
+    def __init__(
+        self,
+        *,
+        trava_de_confirmacao: TravaDeConfirmacao,
+        frase_de_espera: FraseDeEspera | None = None,
+        **argumentos: Any,
+    ) -> None:
         super().__init__(**argumentos)
         self._trava_de_confirmacao = trava_de_confirmacao
+        self._frase_de_espera = frase_de_espera
 
     async def run_live(self, *args: Any, **argumentos: Any) -> AsyncGenerator[Event, None]:
         async with contextlib.aclosing(super().run_live(*args, **argumentos)) as eventos:
             async for evento in eventos:
                 self._trava_de_confirmacao.observar(evento)
+                if self._frase_de_espera is not None:
+                    self._frase_de_espera.observar(evento)
                 yield evento
 
 
@@ -133,9 +143,11 @@ async def atender(ctx: JobContext) -> None:
     servico = DatabaseSessionService(ConfigSessoesAdk().url)
     await _preparar_sessao(servico, ctx.room.name, chamada.chamada_id)
     trava = TravaDeConfirmacao()
+    frase = await publicar_frase_de_espera(ctx.room, config.frase_espera_arquivo)
     runner = RunnerObservado(
         trava_de_confirmacao=trava,
-        agent=criar_agente(config, chamada, trava),
+        frase_de_espera=frase,
+        agent=criar_agente(config, chamada, trava, frase),
         app_name=APP,
         session_service=servico,
     )
@@ -149,6 +161,8 @@ async def atender(ctx: JobContext) -> None:
             run_config=config_de_voz(config),
         ).start()
     finally:
+        if frase is not None:
+            await frase.fechar()
         try:
             await encerrar_sessao(servico, ctx.room.name, chamada.chamada_id, ConfigRabbit())
         finally:

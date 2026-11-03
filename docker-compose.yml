@@ -200,6 +200,9 @@ services:
     restart: unless-stopped
     # O LiveKit anuncia a mídia em 127.0.0.1, para o navegador. Na rede dele, o agente também alcança.
     network_mode: service:livekit
+    volumes:
+      # Sem o arquivo da frase de espera, o agente atende sem ela.
+      - ./infra/audio:/audio:ro
     environment: &ambiente-agente
       LIVEKIT_URL: ws://localhost:7880
       LIVEKIT_API_KEY: ${LIVEKIT_API_KEY:-clinica-dev}
@@ -208,6 +211,7 @@ services:
       AGENTE_MODELO_VOZ: ${AGENTE_MODELO_VOZ:-gemini-3.1-flash-live-preview}
       AGENTE_API_URL: http://api:8000
       AGENTE_SILENCIO_FIM_DE_FALA_MS: ${AGENTE_SILENCIO_FIM_DE_FALA_MS:-}
+      AGENTE_FRASE_ESPERA_ARQUIVO: /audio/frase_espera.wav
       ADK_SESSOES_HOST: postgres
       ADK_SESSOES_DB: ${POSTGRES_DB:-clinica}
       ADK_SESSOES_SENHA: ${ADK_SESSOES_SENHA:-adk_sessoes}
