@@ -355,8 +355,8 @@ clinica-voz/
 ├── .env.example
 ├── docs/                 # spec.md (este documento), roteiros de teste, validacao-final.md, runbook.md
 ├── exemplos/             # base de conhecimento da clínica fictícia
-├── infra/                # livekit.yaml, sip.yaml
-├── scripts/              # bootstrap_sip.sh, seed.py
+├── infra/                # livekit.yaml, sip.yaml, backup/, audio/
+├── scripts/              # bootstrap_sip.sh, seed.py, restaurar_backup.sh, gerar_segredos.py, gerar_frase_espera.py
 ├── packages/
 │   └── core/             # modelos, schemas Pydantic, cliente RabbitMQ, config
 └── services/
@@ -431,8 +431,8 @@ São 7 fases, cada uma terminando em algo que roda e pode ser testado. As fases 
 - [x] T6.1 Retenção automática de transcrições e texto de consentimento revisado. A retenção só pode apagar a transcrição de uma chamada ligada a uma consulta de voz: a FK e o CHECK `voz_exige_chamada` impedem apagar a chamada ou anular `chamada_id`. O telefone segue o mesmo prazo (`RETENCAO_TRANSCRICAO_DIAS`), em toda chamada, como decidido pelo usuário em 02/11/2026.
 - [x] T6.2 Backup diário do Postgres (`pg_dump` num volume e cópia externa).
 - [x] T6.3 Logs estruturados e um painel simples de saúde (serviços, filas, chamadas ativas).
-- [ ] T6.4 Runbook: o que fazer se cair a internet, o gateway ou a API do Gemini.
-- [ ] T6.5 Trocar as senhas padrão de desenvolvimento do Compose (Postgres e RabbitMQ) antes de usar em produção.
+- [x] T6.4 Runbook: o que fazer se cair a internet, o gateway ou a API do Gemini.
+- [ ] T6.5 Trocar as senhas padrão de desenvolvimento do Compose (Postgres e RabbitMQ) antes de usar em produção. *A ferramenta e o roteiro estão prontos (`scripts/gerar_segredos.py` e `docs/runbook.md`); a troca é feita na instalação da clínica.*
 
 ## Decisões em aberto e riscos
 
@@ -473,8 +473,10 @@ O que o código já cobre com fakes, mas só pode ser confirmado com crédito do
 - [ ] T5.6: fazer ligações de teste com cada voz que você considerar, conferir se o modelo aceita o nome e escolher pelo ouvido. Conferir também se a saudação configurada no painel é falada e se, fora do horário, o agente avisa e registra o pedido de retorno.
 - [ ] Ouvir o novo texto do consentimento numa ligação: ele ficou mais longo, e o paciente pode interromper. Conferir se o agente fala o prazo certo.
 - [ ] T6.3: fazer uma ligação com a stack real e conferir com `docker compose logs agent` se os logs não trazem falas nem dados do paciente. Os testes cobrem só os filtros: os textos reais do ADK dependem de uma conversa de verdade.
+- [ ] T6.4: confirmar no log real o texto do erro de crédito (`1011`, `prepayment credits are depleted`) citado no runbook, e configurar o alerta de saldo no AI Studio.
 
 ### Com o gateway e a telefonia
+- [ ] T6.4: configurar e testar o desvio no gateway para a recepção com o agente parado, e anotar no runbook o que foi feito no seu modelo.
 
 ### Pelo usuário
 - [ ] Decidir como a recepção acessa o painel: na própria máquina do servidor, ou pela rede com `PAINEL_BIND` e HTTPS na frente. Com HTTP puro na rede, a senha trafega aberta.
@@ -482,6 +484,7 @@ O que o código já cobre com fakes, mas só pode ser confirmado com crédito do
 - [ ] Levar o texto do consentimento a um advogado. Pontos a confirmar: base legal para dados de saúde, e se é preciso dizer que a voz passa pelo Google, na nuvem.
 - [ ] Decidir como atender a um pedido de apagar os dados de um paciente (LGPD). O painel não apaga pacientes, porque consultas apontam para eles. Também não há prazo para consultas e `motivo_cancelamento`.
 - [ ] Escolher o destino da cópia externa de backup (disco externo ou pasta sincronizada), definir `BACKUP_DESTINO_EXTERNO` e `BACKUP_SENHA` no `.env`, e guardar a senha fora do servidor: sem ela, a cópia não abre.
+- [ ] T6.5, na instalação da clínica: rodar `scripts/gerar_segredos.py` e seguir "Trocar as senhas" em `docs/runbook.md`, até o alerta sumir da tela Saúde.
 
 ## Decisões tomadas pelo agente
 
@@ -584,3 +587,5 @@ Decisões técnicas tomadas durante a implementação, com a opção mais conser
 | T6.2 | A cópia externa só sai criptografada (AES-256, `openssl`), com `BACKUP_SENHA`, para a pasta de `BACKUP_DESTINO_EXTERNO`. Sem senha, não há cópia externa, e a situação aparece na tela de saúde. A restauração usa sempre um banco novo e não toca no banco em uso. Foi testada de ponta a ponta num Postgres novo, em 02/11/2026. | O dump tem dados de saúde. Transcrições apagadas continuam nos backups por até 14 dias: esse é o prazo real de eliminação. |
 | T6.3 | Logs em JSON, uma linha por evento, em todos os serviços Python (`clinica_core.logs`). O log de acesso fica desligado, e `httpx`, `google_adk`, `google_genai` e `mcp` só registram avisos. | A URL traz a busca por nome de paciente, e esses registros podem trazer a conversa: um log não pode virar uma cópia dos dados, fora da retenção. |
 | T6.3 | A tela "Saúde" é só para administradores e relê a cada 30 s. Mostra serviços, filas, chamadas ativas (sem fim há menos de 4 h) e o último backup. Alerta sobre mensagens em DLQ, worker sem consumir, backup com falha, cópia externa desligada e senhas de desenvolvimento em uso. Não testa o Gemini. | Uma sonda ao Gemini gastaria crédito a cada 30 s. O runbook explica como notar esse caso pelos logs e pelo saldo. |
+| T6.4 | O runbook está em `docs/runbook.md`. Sem o Gemini, o sistema não toca uma mensagem gravada: a ligação cai, e o plano B é o desvio no gateway. | Sem o agente, não há quem toque a mensagem. Uma mensagem gravada exigiria um segundo caminho de áudio, sem pedido para isso. O risco da spec previa as duas opções. |
+| T6.5 | `scripts/gerar_segredos.py` grava segredos fortes no `.env`, sem mostrar os valores e sem trocar os que já existem. O painel alerta enquanto houver senha de desenvolvimento em uso. A troca de fato fica para a instalação na clínica, e por isso a T6.5 segue aberta. | Trocar agora derrubaria o ambiente de desenvolvimento. A senha do Postgres e a do RabbitMQ já estão gravadas nos volumes, e o runbook traz os comandos. |
