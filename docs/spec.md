@@ -138,7 +138,7 @@ O paciente liga para o número da clínica e resolve tudo por voz, sem esperar a
 
 ## Plano técnico
 
-São 12 serviços num Docker Compose. O gateway com chip entrega a ligação ao LiveKit pela rede local. O agente ADK conversa pelo Gemini Live e age por dois servidores MCP: um só de leitura (RAG) e outro de agenda, que é um adaptador fino da API. A API é dona das regras, e o Postgres garante que não haja horário duplicado.
+São 13 serviços num Docker Compose. O gateway com chip entrega a ligação ao LiveKit pela rede local. O agente ADK conversa pelo Gemini Live e age por dois servidores MCP: um só de leitura (RAG) e outro de agenda, que é um adaptador fino da API. A API é dona das regras, e o Postgres garante que não haja horário duplicado.
 
 ```text
 Paciente ──► Gateway GSM/4G ──► livekit-sip ──► livekit-server
@@ -174,7 +174,7 @@ worker ◄── RabbitMQ            Postgres 16 (pgvector + exclusion) ◄─�
 ### Fluxo de uma ligação
 
 1. O paciente liga para o número do chip. O gateway atende e envia um `INVITE` SIP ao `livekit-sip` na rede local (porta 5060).
-2. O `livekit-sip` valida o trunk de entrada, cria a sala `call-<uuid>` e, pela dispatch rule, despacha o agente `recepcionista`.
+2. O `livekit-sip` valida o trunk de entrada, cria a sala `call-_<número do chip>_<aleatório>` e, pela dispatch rule, despacha o agente `recepcionista`. O nome da sala nunca traz o número de quem liga.
 3. O worker do agente abre um job **em processo próprio**. O `LiveKitRunner` liga a sala ao ADK, e o estado da sessão recebe o telefone do chamador (`livekit_caller_phone_number`).
 4. O entrypoint registra a chamada na API (`POST /chamadas`), recebe um `chamada_id` e o injeta nos headers das conexões MCP (`X-Chamada-Id`, `X-Clinica-Id`).
 5. O agente se apresenta, pede o consentimento LGPD e registra a resposta na chamada. Com consentimento, cumprimenta e conduz a conversa chamando as ferramentas MCP. Sem consentimento, só tira dúvidas e transfere.
@@ -336,8 +336,8 @@ O painel é servido pelo FastAPI com templates Jinja2 e HTMX, e recebe atualiza�
 | `rabbitmq` | `rabbitmq:3-management` | 15672 (UI), 5672 (só dev) | — |
 | `backup` | `pgvector/pgvector:pg16` | — | postgres |
 | `redis` | `redis:7` | — | — |
-| `livekit` | `livekit/livekit-server` | 7880, 7881/tcp, faixa UDP de RTC | redis |
-| `livekit-sip` | `livekit/sip` | 5060/udp, 10000–20000/udp (só na LAN) | livekit, redis |
+| `livekit` | `livekit/livekit-server` | 7880, 7881/tcp, 7882/udp, em `127.0.0.1`. Também publica as portas do SIP: 5060/udp e 10000–10100/udp, em `SIP_BIND` (só na LAN) | redis |
+| `livekit-sip` | `livekit/sip` | — (na rede do `livekit`) | livekit, redis |
 | `api` | build `./services/api` | `127.0.0.1:${API_PORT:-8000}` | postgres, rabbitmq |
 | `painel` | build `./services/painel` | `${PAINEL_BIND:-127.0.0.1}:${PAINEL_PORTA:-8080}` | api, rabbitmq |
 | `mcp-clinica` | build `./services/mcp_clinica` | — (rede interna) | api |
@@ -345,7 +345,7 @@ O painel é servido pelo FastAPI com templates Jinja2 e HTMX, e recebe atualiza�
 | `agent` | build `./services/agent` | — | livekit, MCPs |
 | `worker` | build `./services/worker` | — | postgres, rabbitmq |
 
-Como o gateway está na mesma rede local, as portas SIP não precisam ser abertas para a internet. Trunk de entrada e dispatch rule ficam no Redis e são recriados pelo script `scripts/bootstrap_sip.sh` (`lk sip inbound create` + `lk sip dispatch create`). Para desenvolver sem gateway, um softphone (Linphone, Zoiper) liga direto para o IP do `livekit-sip`.
+Como o gateway está na mesma rede local, as portas SIP não precisam ser abertas para a internet. Trunk de entrada e dispatch rule ficam no Redis e são recriados pelo script `scripts/bootstrap_sip.sh`. Para desenvolver sem gateway, um softphone (Linphone, Zoiper) liga direto para o IP do `livekit-sip`.
 
 ### Estrutura do repositório
 
@@ -355,7 +355,7 @@ clinica-voz/
 ├── .env.example
 ├── docs/                 # spec.md (este documento), roteiros de teste, validacao-final.md, runbook.md
 ├── exemplos/             # base de conhecimento da clínica fictícia
-├── infra/                # livekit.yaml, sip.yaml, backup/, audio/
+├── infra/                # livekit.yaml, backup/, audio/
 ├── scripts/              # bootstrap_sip.sh, seed.py, restaurar_backup.sh, gerar_segredos.py, gerar_frase_espera.py
 ├── packages/
 │   └── core/             # modelos, schemas Pydantic, cliente RabbitMQ, config
@@ -410,7 +410,7 @@ São 7 fases, cada uma terminando em algo que roda e pode ser testado. As fases 
 
 **Fase 4 — Telefonia pelo chip**
 
-- [ ] T4.1 `livekit-sip` no Compose, mais o `bootstrap_sip.sh` (trunk de entrada restrito ao IP do gateway e dispatch rule para `recepcionista`).
+- [x] T4.1 `livekit-sip` no Compose, mais o `bootstrap_sip.sh` (trunk de entrada restrito ao IP do gateway e dispatch rule para `recepcionista`).
 - [ ] T4.2 Teste com softphone na LAN.
 - [ ] T4.3 Configurar o gateway: rota GSM → IP para o `livekit-sip`, codec G.711 e caller ID repassado.
 - [ ] T4.4 Teste real com 2 celulares ligando ao mesmo tempo para o mesmo horário. *Pronto quando:* o critério da H4 passa.
@@ -477,6 +477,10 @@ O que o código já cobre com fakes, mas só pode ser confirmado com crédito do
 
 ### Com o gateway e a telefonia
 - [ ] T6.4: configurar e testar o desvio no gateway para a recepção com o agente parado, e anotar no runbook o que foi feito no seu modelo.
+- [ ] T4.1: com o gateway, definir `SIP_GATEWAY_IP`, `SIP_BIND` e `SIP_IP_ANUNCIADO` no `.env`, rodar `scripts/bootstrap_sip.sh` e confirmar que um softphone em outra máquina da rede é recusado.
+- [ ] T4.2: teste com softphone na rede local: ligar, ouvir e falar. É a primeira vez que a mídia real passa pelo `livekit-sip`. Gasta crédito do Gemini.
+- [ ] T4.3: configurar o gateway: rota GSM para IP apontando para o `livekit-sip`, codec G.711 e caller ID repassado.
+- [ ] T4.4: 2 celulares ligando ao mesmo tempo para o mesmo horário: exatamente um consegue segurar, e o outro ouve "esse horário acabou de ser ocupado" com alternativas. Gasta crédito do Gemini.
 
 ### Pelo usuário
 - [ ] Decidir como a recepção acessa o painel: na própria máquina do servidor, ou pela rede com `PAINEL_BIND` e HTTPS na frente. Com HTTP puro na rede, a senha trafega aberta.
@@ -528,7 +532,7 @@ Decisões técnicas tomadas durante a implementação, com a opção mais conser
 | T2.5 | O teste com o MCP Inspector foi feito pela linha de comando. A interface web ficou de fora, por decisão do usuário. | A linha de comando cobre listar e chamar as ferramentas, com o header da chamada. |
 | Ajuste | O cache dos embeddings das perguntas fica na memória do `mcp-conhecimento`, com até 1024 perguntas. A chave é o hash da pergunta normalizada (sem diferença de caixa e de espaços), e falhas não entram no cache. | O texto da pergunta pode ter dado de saúde: o hash evita mantê-lo na memória, e o cache some ao reiniciar. Com 768 dimensões, ocupa cerca de 25 MB no pior caso. |
 | T3.1 | Modelo de voz: `gemini-3.1-flash-live-preview`. Em três conversas iguais por voz sintetizada, o `gemini-2.5-flash-native-audio-latest` chamou ferramentas sem os argumentos, em sequência, trocou palavras por lixo na fala ("ódioestado") e travou conversas. O 3.1 completou todas, com mediana de 2,4 a 2,8 s nas perguntas. | A escolha foi por estabilidade e pelas transcrições. A qualidade do português aos ouvidos fica para o teste do usuário. O nome continua em `AGENTE_MODELO_VOZ`. |
-| T3.1 | O agente fica na rede do contêiner `livekit` (`network_mode: service:livekit`), e o LiveKit anuncia a mídia em `127.0.0.1`, numa única porta UDP (7882). Todas as portas ficam em `127.0.0.1`. | Com um só endereço anunciado, navegador e agente alcançam a mídia sem depender do IP da rede local. A Fase 4 revê o `LIVEKIT_NODE_IP`. |
+| T3.1 | O agente fica na rede do contêiner `livekit` (`network_mode: service:livekit`), e o LiveKit anuncia a mídia em `127.0.0.1`, numa única porta UDP (7882). Essas portas ficam em `127.0.0.1`. | Com um só endereço anunciado, navegador e agente alcançam a mídia sem depender do IP da rede local. Revisto na T4.1: o `livekit-sip` entrou na mesma rede, e `LIVEKIT_NODE_IP` não mudou. |
 | T3.1 | `NO_GCE_CHECK=true` na imagem do agente. | O `McpToolset` do ADK procura credenciais do Google Cloud e esperava cerca de 12 s pelo servidor de metadados em cada ligação. A abertura caiu de 14 s para cerca de 2 s. |
 | T3.1 | A abertura vem de um evento de usuário gravado na sessão antes de o modelo conectar. | O modelo só fala depois de uma fala do usuário, e o `LiveKitRunner` não expõe a fila. O ADK já envia o histórico ao conectar. |
 | T3.1 | `GET /clinicas` na API, com id e nome. O agente usa a única clínica da instalação, ou `AGENTE_CLINICA_ID` se configurado. | O agente precisa do nome para se apresentar e não toca no banco. Evita um passo manual de copiar o id depois do seed. |
@@ -589,3 +593,6 @@ Decisões técnicas tomadas durante a implementação, com a opção mais conser
 | T6.3 | A tela "Saúde" é só para administradores e relê a cada 30 s. Mostra serviços, filas, chamadas ativas (sem fim há menos de 4 h) e o último backup. Alerta sobre mensagens em DLQ, worker sem consumir, backup com falha, cópia externa desligada e senhas de desenvolvimento em uso. Não testa o Gemini. | Uma sonda ao Gemini gastaria crédito a cada 30 s. O runbook explica como notar esse caso pelos logs e pelo saldo. |
 | T6.4 | O runbook está em `docs/runbook.md`. Sem o Gemini, o sistema não toca uma mensagem gravada: a ligação cai, e o plano B é o desvio no gateway. | Sem o agente, não há quem toque a mensagem. Uma mensagem gravada exigiria um segundo caminho de áudio, sem pedido para isso. O risco da spec previa as duas opções. |
 | T6.5 | `scripts/gerar_segredos.py` grava segredos fortes no `.env`, sem mostrar os valores e sem trocar os que já existem. O painel alerta enquanto houver senha de desenvolvimento em uso. A troca de fato fica para a instalação na clínica, e por isso a T6.5 segue aberta. | Trocar agora derrubaria o ambiente de desenvolvimento. A senha do Postgres e a do RabbitMQ já estão gravadas nos volumes, e o runbook traz os comandos. |
+| T4.1 | A dispatch rule é a `callee` com `randomize`, e não a individual. A sala fica `call-_<número discado>_<aleatório>`. | A regra individual põe o número de quem liga no nome da sala, que fica em `chamadas.sala` e nos logs, e escaparia da retenção da T6.1. A documentação do LiveKit faz esse mesmo alerta. |
+| T4.1 | O `livekit-sip` fica na rede do `livekit`, como o agente, e usa só 100 portas RTP (10000-10100). As portas ficam em `127.0.0.1` por padrão, e `SIP_BIND` e `SIP_IP_ANUNCIADO` as abrem na rede local. O bootstrap usa a API do LiveKit em Python, no contêiner do agente, em vez do `lk`. | A mídia já é anunciada em 127.0.0.1 nessa rede. Uma faixa grande de portas fica lenta no Docker Desktop, como visto na T3.1, e um chip usa poucas. O script pode repetir sem duplicar, é testável e não exige instalar nada. |
+| T4.1 | A restrição por IP foi testada em 02/11/2026, com um INVITE sintético: de um IP fora da lista, o `livekit-sip` respondeu `404`. A documentação diz que, na nuvem, o campo precisa ser habilitado pelo suporte, e por isso valia conferir no self-hosted. | A trava é a única defesa do trunk sem digest. O INVITE sintético não testa áudio. |

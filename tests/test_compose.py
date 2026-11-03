@@ -13,6 +13,7 @@ IMAGENS = {
     "rabbitmq": "rabbitmq:3-management",
     "redis": "redis:7",
     "livekit": "livekit/livekit-server:v1.13.11",
+    "livekit-sip": "livekit/sip:v1.22.0",
 }
 CONSTRUIDOS = ["api", "painel", "worker", "mcp-clinica", "mcp-conhecimento", "agent"]
 DOCKERFILES = {servico: servico.replace("-", "_") for servico in CONSTRUIDOS}
@@ -21,7 +22,14 @@ PORTAS = {
     "postgres": {("127.0.0.1", "5432")},
     "rabbitmq": {("127.0.0.1", "5672"), ("127.0.0.1", "15672")},
     "redis": set[tuple[str, str]](),
-    "livekit": {("127.0.0.1", "7880"), ("127.0.0.1", "7881"), ("127.0.0.1", "7882")},
+    "livekit": {
+        ("127.0.0.1", "7880"),
+        ("127.0.0.1", "7881"),
+        ("127.0.0.1", "7882"),
+        ("127.0.0.1", "5060"),
+        *(("127.0.0.1", str(porta)) for porta in range(10000, 10101)),
+    },
+    "livekit-sip": set[tuple[str, str]](),
 }
 
 
@@ -87,6 +95,17 @@ def test_agente_sem_portas_e_na_rede_do_livekit(configuracao: dict[str, Any]) ->
     assert agente["depends_on"]["mcp-clinica"]["condition"] == "service_healthy"
     assert agente["depends_on"]["mcp-conhecimento"]["condition"] == "service_healthy"
     assert "AGENTE_MODELO_VOZ" in agente["environment"]
+
+
+def test_sip_na_rede_do_livekit_com_padrao_so_na_propria_maquina(
+    configuracao: dict[str, Any],
+) -> None:
+    sip = configuracao["livekit-sip"]
+    assert sip["network_mode"] == "service:livekit"
+    assert "ports" not in sip
+    corpo = sip["environment"]["SIP_CONFIG_BODY"]
+    assert "hide_inbound_port: true" in corpo
+    assert "rtp_port: 10000-10100" in corpo
 
 
 def test_pagina_de_teste_so_com_perfil(configuracao: dict[str, Any]) -> None:
