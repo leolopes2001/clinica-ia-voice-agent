@@ -349,8 +349,8 @@ services:
       RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:-clinica}
       AGENTE_MCP_CLINICA_URL: http://mcp-clinica:8000/mcp
       AGENTE_MCP_CONHECIMENTO_URL: http://mcp-conhecimento:8000/mcp
-      # Só o teste pelo navegador usa. Na ligação real, o telefone vem do SIP (T4.6).
-      AGENTE_PERMITIR_TELEFONE_DE_TESTE: ${AGENTE_PERMITIR_TELEFONE_DE_TESTE:-true}
+      # Só o teste pelo navegador liga isto. Na clínica, fica desligado: o telefone vem do SIP.
+      AGENTE_PERMITIR_TELEFONE_DE_TESTE: ${AGENTE_PERMITIR_TELEFONE_DE_TESTE:-false}
     depends_on:
       livekit:
         condition: service_healthy

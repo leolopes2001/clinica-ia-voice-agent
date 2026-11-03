@@ -108,6 +108,14 @@ def test_sip_na_rede_do_livekit_com_padrao_so_na_propria_maquina(
     assert "rtp_port: 10000-10100" in corpo
 
 
+def test_telefone_de_teste_vem_desligado_por_padrao(
+    configuracao: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    assert (
+        "${AGENTE_PERMITIR_TELEFONE_DE_TESTE:-false}" in (RAIZ / "docker-compose.yml").read_text()
+    )
+
+
 def test_pagina_de_teste_so_com_perfil(configuracao: dict[str, Any]) -> None:
     assert "teste-navegador" not in configuracao
 

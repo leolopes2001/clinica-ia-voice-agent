@@ -1038,3 +1038,65 @@ async def test_preparar_e_so_para_ligacao(
         json=corpo,
     )
     assert resposta.json()["motivo"] == "exige_chamada"
+
+
+async def _chamada_oculta(http_api: httpx.AsyncClient, c: Cenario) -> str:
+    resposta = await http_api.post(
+        "/chamadas",
+        headers={"X-Clinica-Id": str(c.clinica_id), "Idempotency-Key": uuid4().hex},
+        json={"sala": f"call-{uuid4()}"},
+    )
+    assert resposta.status_code == 201, resposta.text
+    chamada_id: str = resposta.json()["chamada_id"]
+    return chamada_id
+
+
+@pytest.mark.parametrize(("ferramenta", "argumentos"), PROTEGIDAS)
+async def test_numero_oculto_e_recusado_mesmo_com_consentimento(
+    http_api: httpx.AsyncClient,
+    app_mcp: httpx.AsyncClient,
+    c: Cenario,
+    ferramenta: str,
+    argumentos: dict[str, Any],
+) -> None:
+    chamada_id = await _chamada_oculta(http_api, c)
+    async with _na_chamada(app_mcp, chamada_id) as cliente:
+        consentimento = await _ferramenta(cliente, "registrar_consentimento", aceitou=True)
+        assert consentimento["consentimento"] is True
+        corpo = await _ferramenta(cliente, ferramenta, **argumentos)
+    assert corpo == {"ok": False, "motivo": "telefone_oculto"}
+
+
+async def test_numero_oculto_sem_consentimento_tambem_diz_telefone_oculto(
+    http_api: httpx.AsyncClient, app_mcp: httpx.AsyncClient, c: Cenario
+) -> None:
+    chamada_id = await _chamada_oculta(http_api, c)
+    async with _na_chamada(app_mcp, chamada_id) as cliente:
+        corpo = await _ferramenta(cliente, "identificar_chamador")
+    assert corpo["motivo"] == "telefone_oculto"
+
+
+async def test_numero_oculto_ainda_consulta_o_que_nao_identifica(
+    http_api: httpx.AsyncClient, app_mcp: httpx.AsyncClient, c: Cenario
+) -> None:
+    chamada_id = await _chamada_oculta(http_api, c)
+    async with _na_chamada(app_mcp, chamada_id) as cliente:
+        corpo = await _ferramenta(cliente, "listar_procedimentos")
+    assert corpo["ok"] is True
+
+
+async def test_numero_oculto_grava_a_chamada_sem_telefone_e_avisa_o_agente(
+    http_api: httpx.AsyncClient, c: Cenario, fabrica: Fabrica
+) -> None:
+    chamada_id = await _chamada_oculta(http_api, c)
+    async with fabrica() as sessao:
+        chamada = await sessao.get_one(Chamada, UUID(chamada_id))
+        assert chamada.telefone is None
+    resposta = await http_api.get("/chamadas/configuracao", headers={"X-Chamada-Id": chamada_id})
+    assert resposta.json()["telefone_oculto"] is True
+
+
+async def test_chamada_identificada_nao_e_oculta(http_api: httpx.AsyncClient, c: Cenario) -> None:
+    chamada_id = await _nova_chamada(http_api, c)
+    resposta = await http_api.get("/chamadas/configuracao", headers={"X-Chamada-Id": chamada_id})
+    assert resposta.json()["telefone_oculto"] is False

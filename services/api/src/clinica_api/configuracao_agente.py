@@ -71,6 +71,7 @@ class ConfiguracaoDaLigacao(BaseModel):
     dentro_do_horario: bool
     numero_transferencia: str | None
     retencao_dias: int
+    telefone_oculto: bool
 
 
 def destino_de_transferencia(bruto: str) -> str:

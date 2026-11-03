@@ -48,7 +48,8 @@ class Clinicas(BaseModel):
 
 
 class CriarChamadaEntrada(_Entrada):
-    telefone: Annotated[str, StringConstraints(pattern=r"^\+[1-9]\d{7,14}$")]
+    # Sem o campo: número oculto.
+    telefone: Annotated[str, StringConstraints(pattern=r"^\+[1-9]\d{7,14}$")] | None = None
     sala: _Texto
 
 

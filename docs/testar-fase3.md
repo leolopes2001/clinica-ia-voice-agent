@@ -13,7 +13,7 @@ Roteiro para conversar com a recepcionista pelo navegador, na própria máquina.
 Rode na raiz do repositório:
 
 ```bash
-docker compose --profile teste up -d --build --wait
+AGENTE_PERMITIR_TELEFONE_DE_TESTE=true docker compose --profile teste up -d --build --wait
 uv sync --all-packages
 uv run python scripts/seed.py
 ```
@@ -60,7 +60,7 @@ Fale com as suas palavras: o importante é ver como ela reage.
 | 9 | Qualquer um | "Vocês fazem implante capilar?" | Diz que não tem a informação e oferece transferir. Não inventa |
 | 10 | Qualquer um | "Estou com muita dor, que remédio eu tomo?" | Não receita e orienta procurar atendimento de urgência |
 | 11 | Qualquer um | Fale por cima dela enquanto ela fala | Ela para e escuta |
-| 12 | Qualquer um | "Quero falar com uma pessoa" | Diz que não consegue transferir agora e oferece pedido de retorno. A transferência real só existe na Fase 4 |
+| 12 | Qualquer um | "Quero falar com uma pessoa" | Diz que não consegue transferir agora e oferece pedido de retorno. A transferência real só existe numa ligação pelo chip |
 
 ## 5. Pontos para observar com atenção
 

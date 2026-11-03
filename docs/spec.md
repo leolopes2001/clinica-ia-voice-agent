@@ -279,7 +279,7 @@ Nenhuma ferramenta recebe telefone, `paciente_id` da sessão ou `clinica_id` com
 | Ferramenta | Entrada | Saída |
 | --- | --- | --- |
 | `identificar_chamador` | — | lista de pacientes do telefone `{paciente_id, primeiro_nome}`, vazia se não houver. Com um único paciente, ele já fica selecionado na chamada |
-| `registrar_consentimento` | aceitou | resposta gravada na chamada (entra na T3.2). Sem consentimento dado, a API recusa as ferramentas de identidade e as que mudam a agenda, com o motivo `consentimento_ausente` |
+| `registrar_consentimento` | aceitou | resposta gravada na chamada (entra na T3.2). Sem consentimento dado, a API recusa as ferramentas de identidade e as que mudam a agenda, com o motivo `consentimento_ausente`. Com número oculto, recusa as mesmas, com `telefone_oculto` |
 | `selecionar_paciente` | paciente_id | paciente selecionado na chamada. Desfaz qualquer verificação anterior |
 | `cadastrar_paciente` | nome, data_nascimento | paciente, que fica selecionado na chamada |
 | `verificar_identidade` | data_nascimento | `ok` true/false para o paciente selecionado (3 tentativas por chamada) |
@@ -415,7 +415,7 @@ São 7 fases, cada uma terminando em algo que roda e pode ser testado. As fases 
 - [ ] T4.3 Configurar o gateway: rota GSM → IP para o `livekit-sip`, codec G.711 e caller ID repassado.
 - [ ] T4.4 Teste real com 2 celulares ligando ao mesmo tempo para o mesmo horário. *Pronto quando:* o critério da H4 passa.
 - [ ] T4.5 Transferência para a recepção (SIP REFER ou discagem para ramal/celular).
-- [ ] T4.6 Número oculto: a chamada é aceita sem telefone (`chamadas.telefone` já aceita nulo desde a T6.1, e o `POST /chamadas` deixa de exigir o campo). A API recusa, com o motivo `telefone_oculto`, as mesmas ferramentas bloqueadas pela falta de consentimento, e o agente só tira dúvidas e transfere. Sem telefone não há pedido de retorno: fora do horário comercial, o agente avisa e pede para ligar de novo. Normalizar para E.164 o caller ID recebido do gateway.
+- [x] T4.6 Número oculto: a chamada é aceita sem telefone (`chamadas.telefone` já aceita nulo desde a T6.1, e o `POST /chamadas` deixa de exigir o campo). A API recusa, com o motivo `telefone_oculto`, as mesmas ferramentas bloqueadas pela falta de consentimento, e o agente só tira dúvidas e transfere. Sem telefone não há pedido de retorno: fora do horário comercial, o agente avisa e pede para ligar de novo. Normalizar para E.164 o caller ID recebido do gateway.
 
 **Fase 5 — Painel administrativo**
 
@@ -481,6 +481,7 @@ O que o código já cobre com fakes, mas só pode ser confirmado com crédito do
 - [ ] T4.2: teste com softphone na rede local: ligar, ouvir e falar. É a primeira vez que a mídia real passa pelo `livekit-sip`. Gasta crédito do Gemini.
 - [ ] T4.3: configurar o gateway: rota GSM para IP apontando para o `livekit-sip`, codec G.711 e caller ID repassado.
 - [ ] T4.4: 2 celulares ligando ao mesmo tempo para o mesmo horário: exatamente um consegue segurar, e o outro ouve "esse horário acabou de ser ocupado" com alternativas. Gasta crédito do Gemini.
+- [ ] T4.6: ligar pelo chip com o número oculto e confirmar como o seu gateway entrega o caller ID nos dois casos. Conferir na tela Chamadas o telefone em E.164 e, no oculto, "Não disponível". O agente só deve tirar dúvidas e transferir. Gasta crédito do Gemini.
 
 ### Pelo usuário
 - [ ] Decidir como a recepção acessa o painel: na própria máquina do servidor, ou pela rede com `PAINEL_BIND` e HTTPS na frente. Com HTTP puro na rede, a senha trafega aberta.
@@ -508,7 +509,7 @@ Decisões técnicas tomadas durante a implementação, com a opção mais conser
 | T2.1 | Só os erros de data de nascimento gastam as 3 tentativas. Um erro depois de verificar desfaz a verificação. | Uma mãe ou um pai que verifica vários filhos na mesma ligação não fica bloqueado, e a adivinhação continua limitada a 3 erros. |
 | T2.1 | Selecionar, cadastrar, identificar e verificar não usam `Idempotency-Key`. | Guardar a resposta quebraria uma sequência legítima, como selecionar A, depois B, depois A de novo. Selecionar, cadastrar e identificar já dão o mesmo resultado se repetidos, e repetir uma data errada só gasta tentativa. |
 | T2.1 | `cadastrar_paciente` não marca a identidade como verificada. Para remarcar ou cancelar, o paciente recém-cadastrado também passa por `verificar_identidade`. | É a regra mais restritiva: na H5, a verificação vem sempre antes de listar consultas. |
-| T2.1 | `POST /chamadas` só aceita telefone em E.164 e exige `Idempotency-Key` (o agente usará a sala como chave). | Uma ligação repetida no retry não duplica a chamada. Normalizar o caller ID do gateway e tratar número oculto fica para as fases 3 e 4. |
+| T2.1 | `POST /chamadas` só aceita telefone em E.164 e exige `Idempotency-Key` (o agente usará a sala como chave). | Uma ligação repetida no retry não duplica a chamada. O agente normaliza o caller ID e trata número oculto desde a T4.6. |
 | T2.1 | O protocolo do pedido de retorno tem 8 dígitos aleatórios. | O agente precisa falar o protocolo em voz alta. |
 | T2.1 | Na falha de `segurar_horario`, o MCP devolve em `alternativas` só as até 3 opções faladas. A rota `/holds` continua devolvendo todos os candidatos. | Reduz o que o modelo precisa ler durante a ligação. |
 | T2.1 | `pacientes.consentimento_em` continua nulo no cadastro por voz até a T3.2, que cria o registro do consentimento. | Não marcar um consentimento que ninguém coletou. |
@@ -536,7 +537,7 @@ Decisões técnicas tomadas durante a implementação, com a opção mais conser
 | T3.1 | `NO_GCE_CHECK=true` na imagem do agente. | O `McpToolset` do ADK procura credenciais do Google Cloud e esperava cerca de 12 s pelo servidor de metadados em cada ligação. A abertura caiu de 14 s para cerca de 2 s. |
 | T3.1 | A abertura vem de um evento de usuário gravado na sessão antes de o modelo conectar. | O modelo só fala depois de uma fala do usuário, e o `LiveKitRunner` não expõe a fila. O ADK já envia o histórico ao conectar. |
 | T3.1 | `GET /clinicas` na API, com id e nome. O agente usa a única clínica da instalação, ou `AGENTE_CLINICA_ID` se configurado. | O agente precisa do nome para se apresentar e não toca no banco. Evita um passo manual de copiar o id depois do seed. |
-| T3.1 | Sem SIP, o telefone vem dos metadados do despacho, e só com `AGENTE_PERMITIR_TELEFONE_DE_TESTE`. Com SIP, o atributo do SIP sempre vence. A T4.6 deve desligar essa opção no ambiente da clínica. | O navegador não tem número de telefone. Os metadados só podem ser escritos com a chave do LiveKit, nunca pelo LLM. |
+| T3.1 | Sem SIP, o telefone vem dos metadados do despacho, e só com `AGENTE_PERMITIR_TELEFONE_DE_TESTE`. Com SIP, o atributo do SIP sempre vence. Desde a T4.6, essa opção fica desligada por padrão, e só o teste pelo navegador a liga. | O navegador não tem número de telefone. Os metadados só podem ser escritos com a chave do LiveKit, nunca pelo LLM. |
 | T3.2 | Confirmado pelo usuário em 02/11/2026. A recusa de consentimento vale até o fim da chamada: um "sim" depois não a desfaz. Recusar depois de aceitar apaga o aceite, tira o paciente selecionado e desfaz a verificação. | É a leitura mais protetora da H1, e uma recusa nunca vira aceite por erro de áudio. O custo é a pessoa que mudar de ideia precisar da recepção ou de outra ligação. |
 | T3.2 | A checagem de consentimento fica em uma dependência das rotas da API e só vale para `origem=voz`. Rota nova de voz: `POST /chamadas/consentimento`, sem `Idempotency-Key`, porque repetir a mesma resposta dá o mesmo resultado. | A regra fica na API, num único lugar, como pede a T3.2. O painel continua sem consentimento de chamada. |
 | T3.2 | O cadastro por voz copia `consentimento_em` da chamada, e também preenche o campo de um paciente que já existia sem ele. | Se a mesma pessoa é "cadastrada" de novo com consentimento, o registro passa a ter esse consentimento. |
@@ -596,3 +597,4 @@ Decisões técnicas tomadas durante a implementação, com a opção mais conser
 | T4.1 | A dispatch rule é a `callee` com `randomize`, e não a individual. A sala fica `call-_<número discado>_<aleatório>`. | A regra individual põe o número de quem liga no nome da sala, que fica em `chamadas.sala` e nos logs, e escaparia da retenção da T6.1. A documentação do LiveKit faz esse mesmo alerta. |
 | T4.1 | O `livekit-sip` fica na rede do `livekit`, como o agente, e usa só 100 portas RTP (10000-10100). As portas ficam em `127.0.0.1` por padrão, e `SIP_BIND` e `SIP_IP_ANUNCIADO` as abrem na rede local. O bootstrap usa a API do LiveKit em Python, no contêiner do agente, em vez do `lk`. | A mídia já é anunciada em 127.0.0.1 nessa rede. Uma faixa grande de portas fica lenta no Docker Desktop, como visto na T3.1, e um chip usa poucas. O script pode repetir sem duplicar, é testável e não exige instalar nada. |
 | T4.1 | A restrição por IP foi testada em 02/11/2026, com um INVITE sintético: de um IP fora da lista, o `livekit-sip` respondeu `404`. A documentação diz que, na nuvem, o campo precisa ser habilitado pelo suporte, e por isso valia conferir no self-hosted. | A trava é a única defesa do trunk sem digest. O INVITE sintético não testa áudio. |
+| T4.6 | Com número oculto, a API responde `telefone_oculto` antes de olhar o consentimento, e o agente ainda pede a autorização, porque a transcrição segue essa resposta (H1). A API avisa o agente ao atender, e o aviso entra no prompt. `AGENTE_PERMITIR_TELEFONE_DE_TESTE` fica desligado por padrão, e o roteiro da Fase 3 o liga. | Sem número, consentir não abre nenhuma ferramenta. O motivo certo evita que o modelo insista em pedir autorização. Número que não dá para normalizar conta como oculto, para nunca identificar a pessoa errada. |

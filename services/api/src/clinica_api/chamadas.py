@@ -103,6 +103,7 @@ async def configuracao_da_ligacao(
         ),
         numero_transferencia=linha.numero_transferencia if linha else None,
         retencao_dias=retencao.transcricao_dias,
+        telefone_oculto=contexto.telefone_oculto,
     )
 
 
