@@ -1,5 +1,6 @@
 """Base de conhecimento, chamadas, pedidos de retorno e configurações, vistos pelo painel."""
 
+from datetime import datetime
 from http import HTTPStatus
 from typing import Annotated
 from uuid import UUID
@@ -11,12 +12,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from clinica_api import auditoria
 from clinica_api.agenda import ErroAgenda
-from clinica_api.autenticacao import Admin, Sessao, UsuarioAtual
+from clinica_api.autenticacao import Admin, Logado, Sessao, UsuarioAtual
 from clinica_api.esquemas import _Entrada
-from clinica_core.modelos import ConhecimentoDocumento
+from clinica_core.modelos import Chamada, ConhecimentoDocumento, PedidoRetorno
 
 router = APIRouter(prefix="/painel")
 
+MAXIMO_CHAMADAS = 200
+MAXIMO_RETORNOS = 200
 _Texto = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=300)]
 
 
@@ -133,3 +136,138 @@ async def apagar_documento(id_: UUID, sessao: Sessao, atual: Admin) -> None:
         antes={"id": str(id_), "titulo": titulo},
     )
     await sessao.commit()
+
+
+class ChamadaResumo(BaseModel):
+    id: UUID
+    # Vazio: número oculto, ou prazo de retenção já vencido.
+    telefone: str | None
+    inicio: datetime
+    fim: datetime | None
+    duracao_s: int | None
+    desfecho: str | None
+    consentiu: bool
+    recusou: bool
+    tem_transcricao: bool
+
+
+class ChamadaCompleta(ChamadaResumo):
+    transcricao: str | None
+    apagar_em: datetime | None
+
+
+def _resumo_da_chamada(chamada: Chamada) -> dict[str, object]:
+    duracao = (chamada.fim - chamada.inicio).total_seconds() if chamada.fim else None
+    return {
+        "id": chamada.id,
+        "telefone": chamada.telefone,
+        "inicio": chamada.inicio,
+        "fim": chamada.fim,
+        "duracao_s": round(duracao) if duracao is not None else None,
+        "desfecho": chamada.desfecho,
+        "consentiu": chamada.consentimento_em is not None,
+        "recusou": chamada.consentimento_recusado_em is not None,
+        "tem_transcricao": chamada.transcricao is not None,
+    }
+
+
+@router.get("/chamadas")
+async def listar_chamadas(
+    sessao: Sessao, atual: Admin, desfecho: str | None = None
+) -> list[ChamadaResumo]:
+    consulta = select(Chamada).where(Chamada.clinica_id == atual.clinica_id)
+    if desfecho:
+        consulta = consulta.where(Chamada.desfecho == desfecho)
+    chamadas = await sessao.scalars(consulta.order_by(Chamada.inicio.desc()).limit(MAXIMO_CHAMADAS))
+    resposta = [ChamadaResumo.model_validate(_resumo_da_chamada(c)) for c in chamadas]
+    auditoria.registrar(
+        sessao,
+        atual.clinica_id,
+        atual.id,
+        "ver",
+        "chamada",
+        depois={"quantidade": len(resposta)},
+    )
+    await sessao.commit()
+    return resposta
+
+
+@router.get("/chamadas/{id_}")
+async def ver_chamada(id_: UUID, sessao: Sessao, atual: Admin) -> ChamadaCompleta:
+    chamada = await sessao.scalar(
+        select(Chamada).where(Chamada.id == id_, Chamada.clinica_id == atual.clinica_id)
+    )
+    if chamada is None:
+        raise ErroAgenda("registro_nao_encontrado")
+    resposta = ChamadaCompleta(
+        **_resumo_da_chamada(chamada),  # type: ignore[arg-type]
+        transcricao=chamada.transcricao,
+        apagar_em=chamada.apagar_em,
+    )
+    # Quem leu qual transcrição: nunca o texto dela.
+    auditoria.registrar(
+        sessao,
+        atual.clinica_id,
+        atual.id,
+        "ver_transcricao" if chamada.transcricao is not None else "ver",
+        "chamada",
+        depois={"id": str(id_)},
+    )
+    await sessao.commit()
+    return resposta
+
+
+class RetornoResumo(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    protocolo: str
+    telefone: str | None
+    motivo: str | None
+    status: str
+    criado_em: datetime
+
+
+@router.get("/retornos")
+async def listar_retornos(sessao: Sessao, atual: Logado) -> list[RetornoResumo]:
+    retornos = await sessao.scalars(
+        select(PedidoRetorno)
+        .where(PedidoRetorno.clinica_id == atual.clinica_id)
+        # Os pendentes primeiro: é o que a recepção precisa resolver.
+        .order_by(PedidoRetorno.status.desc(), PedidoRetorno.criado_em.desc())
+        .limit(MAXIMO_RETORNOS)
+    )
+    resposta = [RetornoResumo.model_validate(r) for r in retornos]
+    auditoria.registrar(
+        sessao,
+        atual.clinica_id,
+        atual.id,
+        "ver",
+        "pedido_retorno",
+        depois={"quantidade": len(resposta)},
+    )
+    await sessao.commit()
+    return resposta
+
+
+@router.post("/retornos/{id_}/concluir")
+async def concluir_retorno(id_: UUID, sessao: Sessao, atual: Logado) -> RetornoResumo:
+    pedido = await sessao.scalar(
+        select(PedidoRetorno).where(
+            PedidoRetorno.id == id_, PedidoRetorno.clinica_id == atual.clinica_id
+        )
+    )
+    if pedido is None:
+        raise ErroAgenda("registro_nao_encontrado")
+    pedido.status = "concluido"
+    resposta = RetornoResumo.model_validate(pedido)
+    auditoria.registrar(
+        sessao,
+        atual.clinica_id,
+        atual.id,
+        "concluir",
+        "pedido_retorno",
+        depois={"id": str(id_)},
+    )
+    await sessao.commit()
+    return resposta

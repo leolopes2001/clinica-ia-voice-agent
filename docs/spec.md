@@ -422,7 +422,7 @@ São 7 fases, cada uma terminando em algo que roda e pode ser testado. As fases 
 - [x] T5.2 Agenda dia/semana com SSE ao vivo, e criar/remarcar/cancelar manual.
 - [x] T5.3 Cadastros: dentistas, grade, bloqueios, procedimentos, consultórios. O painel avisa quando um procedimento está sem dentista habilitado. Uma migration nova adiciona a `grade_trabalho` exclusion constraints que impedem duas linhas sobrepostas do mesmo dentista no mesmo dia da semana, e o mesmo para o consultório.
 - [x] T5.4 Base de conhecimento: upload, status de indexação e tela "testar pergunta".
-- [ ] T5.5 Chamadas: lista, transcrição e desfecho.
+- [x] T5.5 Chamadas: lista, transcrição e desfecho.
 - [ ] T5.6 Configurações do agente, incluindo `antecedencia_minima_min`, que até lá vem das settings (`AGENDA_ANTECEDENCIA_MINIMA_MIN`).
 
 **Fase 6 — Produção local e LGPD**
@@ -566,3 +566,4 @@ Decisões técnicas tomadas durante a implementação, com a opção mais conser
 | T5.3 | As exclusion constraints da grade usam `tsrange` com uma data fixa, porque `time` não tem tipo de intervalo próprio. Em um banco que já tenha grades sobrepostas, a migration falha ao subir a API e aponta o conflito. | Falhar alto é melhor que apagar um horário em silêncio. O seed não tem sobreposição. |
 | T5.4 | O painel salva o arquivo no volume com um nome gerado no servidor, registra o documento na API e publica `conhecimento.indexar`. Aceita até 20 MB. Se o broker estiver fora do ar, o documento vai para `erro`, em vez de ficar em `processando` para sempre, e pode ser indexado de novo. Só textos escritos no painel podem ser editados nele. | O nome do navegador nunca escolhe um caminho no volume. A spec define o painel como produtor de `conhecimento.indexar`, e a decisão da T2.2 pede salvar o texto como arquivo. |
 | T5.4 | A tela "testar pergunta" chama a rota `POST /testar-pergunta` do `mcp-conhecimento`, com o token do painel, e usa a mesma função de busca do agente. Sem o Gemini, ela responde só pela busca por texto. Cada pergunta nova gasta um embedding. | Mostra exatamente o que o agente recebe, sem copiar a busca para outro serviço. O MCP continua só na rede interna. |
+| T5.5 | A tela de chamadas é só para administradores (H11). Ler uma transcrição grava `ver_transcricao` na auditoria, com o id da chamada e sem o texto. Nova tela "Retornos", para recepção e administradores, com o botão de concluir. | A Constituição pede registrar quem viu. A tela de retornos não estava na lista do plano, mas o pedido registrado pelo agente (H7) não chegaria a ninguém sem ela. |

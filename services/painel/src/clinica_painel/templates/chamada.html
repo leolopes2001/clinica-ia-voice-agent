@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% block titulo %}Chamada{% endblock %}
+{% block conteudo %}
+<h1>Chamada de {{ chamada.inicio|data_hora(sessao.fuso) }}</h1>
+<p><a href="/chamadas">Voltar para as chamadas</a></p>
+<section class="cartao">
+  <p>Telefone: {{ chamada.telefone or 'Não disponível' }}</p>
+  <p>Duração: {% if chamada.duracao_s is not none %}{{ chamada.duracao_s // 60 }} min {{ chamada.duracao_s % 60 }} s{% else %}Em andamento{% endif %}</p>
+  <p>Desfecho: {{ desfechos.get(chamada.desfecho, '—') }}</p>
+  <p>Consentimento: {{ 'Aceitou' if chamada.consentiu else ('Recusou' if chamada.recusou else 'Sem resposta') }}</p>
+  {% if chamada.apagar_em %}<p class="discreto">A transcrição será apagada em {{ chamada.apagar_em|data_hora(sessao.fuso) }}.</p>{% endif %}
+</section>
+<h2 class="separado">Transcrição</h2>
+{% if chamada.transcricao %}
+<pre class="transcricao">{{ chamada.transcricao }}</pre>
+{% else %}
+<p class="discreto">Sem transcrição: a pessoa não autorizou, ou o prazo de retenção já venceu.</p>
+{% endif %}
+{% endblock %}
