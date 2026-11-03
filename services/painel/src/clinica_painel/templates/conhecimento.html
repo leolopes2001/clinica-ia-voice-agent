@@ -1,0 +1,82 @@
+{% extends "base.html" %}
+{% block titulo %}Base de conhecimento{% endblock %}
+{% block conteudo %}
+<h1>Base de conhecimento</h1>
+<p class="discreto">O agente responde às dúvidas só com o que está aqui.</p>
+{% if erro %}<p class="erro" role="alert">{{ erro }}</p>{% endif %}
+<div class="duas-colunas">
+  <section>
+    <div class="rolagem"><table>
+      <thead><tr><th>Documento</th><th>Status</th><th>Usado pelo agente</th><th></th></tr></thead>
+      <tbody>
+      {% for d in documentos %}
+        <tr>
+          <td>{{ d.titulo }}</td>
+          <td><span class="selo {{ d.status }}">{{ d.status }}</span></td>
+          <td>{{ 'Sim' if d.ativo else 'Não' }}</td>
+          <td class="acoes">
+            {% if d.editavel %}<a href="/conhecimento/{{ d.id }}/editar">Editar</a>{% endif %}
+            <form method="post" action="/conhecimento/{{ d.id }}/indexar"><button class="link">Indexar de novo</button></form>
+            <form method="post" action="/conhecimento/{{ d.id }}/ativo">
+              <input type="hidden" name="ativo" value="{{ '0' if d.ativo else '1' }}">
+              <button class="link">{{ 'Desativar' if d.ativo else 'Ativar' }}</button>
+            </form>
+            <form method="post" action="/conhecimento/{{ d.id }}/apagar" onsubmit="return confirm('Apagar este documento?')">
+              <button class="link perigo">Apagar</button>
+            </form>
+          </td>
+        </tr>
+      {% else %}<tr><td colspan="4">Nenhum documento. Sem base, o agente diz que não sabe.</td></tr>{% endfor %}
+      </tbody>
+    </table></div>
+    {% if documentos|selectattr('status', 'equalto', 'processando')|list and not edicao %}
+    <p class="discreto" hx-get="/conhecimento" hx-trigger="every 10s" hx-target="main" hx-select="main" hx-swap="outerHTML">Há documentos em processamento. Esta lista atualiza sozinha.</p>
+    {% endif %}
+
+    <h2 class="separado">Testar uma pergunta</h2>
+    <form method="post" action="/conhecimento/testar" class="busca">
+      <input type="search" name="pergunta" value="{{ pergunta }}" placeholder="Quanto custa a limpeza?" aria-label="Pergunta" required>
+      <button>Testar</button>
+    </form>
+    {% if trechos is not none %}
+      {% for t in trechos %}
+      <article class="cartao separado">
+        <strong>{{ loop.index }}. {{ t.fonte }}</strong>
+        <pre class="trecho">{{ t.texto }}</pre>
+      </article>
+      {% else %}<p class="alerta">A busca não trouxe nenhum trecho para esta pergunta.</p>{% endfor %}
+    {% endif %}
+  </section>
+  <section>
+    {% if edicao %}
+    <div class="cartao">
+      <h2>Editar texto</h2>
+      <form method="post" action="/conhecimento/{{ edicao.id }}/editar">
+        <label>Título <input type="text" name="titulo" value="{{ edicao.titulo }}" required></label>
+        <label>Texto <textarea name="texto" required>{{ texto_da_edicao }}</textarea></label>
+        <button>Salvar e indexar</button> <a href="/conhecimento">Cancelar</a>
+      </form>
+    </div>
+    {% else %}
+    <div class="cartao">
+      <h2>Enviar arquivo</h2>
+      <form method="post" action="/conhecimento/enviar" enctype="multipart/form-data">
+        <label>Título (opcional) <input type="text" name="titulo" maxlength="300"></label>
+        <label>Arquivo <input type="file" name="arquivo" accept="{{ extensoes }}" required>
+          <small>PDF, DOCX, MD ou TXT, até 20 MB.</small></label>
+        <button>Enviar</button>
+      </form>
+    </div>
+    <div class="cartao separado">
+      <h2>Escrever um texto</h2>
+      <form method="post" action="/conhecimento/texto">
+        <label>Título <input type="text" name="titulo" maxlength="300" required></label>
+        <label>Texto <textarea name="texto" required></textarea>
+          <small>Use títulos com #, como em "# Preços". Eles ajudam a busca.</small></label>
+        <button>Salvar e indexar</button>
+      </form>
+    </div>
+    {% endif %}
+  </section>
+</div>
+{% endblock %}

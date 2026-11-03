@@ -10,6 +10,7 @@ MENSAGENS = {
     "agendamento_passado": "Esta consulta já começou ou já passou.",
     "credenciais_invalidas": "E-mail ou senha incorretos.",
     "em_uso": "Este registro está em uso e não pode ser apagado. Desative-o, se for o caso.",
+    "documento_nao_editavel": "Só os textos escritos no painel podem ser editados aqui.",
     "email_em_uso": "Este e-mail já está em uso.",
     "entrada_invalida": "Confira os campos preenchidos.",
     "grade_sobreposta": "Este horário se sobrepõe a outro do mesmo dentista ou consultório.",

@@ -13,7 +13,8 @@ from starlette.datastructures import MutableHeaders
 from starlette.middleware.sessions import SessionMiddleware
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
-from clinica_painel import agenda, cadastros, contas
+from clinica_core.config import ConfigRabbit
+from clinica_painel import agenda, cadastros, conhecimento, contas
 from clinica_painel.api import ErroDaApi
 from clinica_painel.config import ConfigPainel
 from clinica_painel.eventos import Distribuidor, FonteDeEventos
@@ -77,6 +78,7 @@ def criar_app(
     busca: httpx.AsyncClient,
     config: ConfigPainel | None = None,
     eventos: FonteDeEventos | None = None,
+    indexacao: conhecimento.PublicadorDeIndexacao | None = None,
 ) -> FastAPI:
     configuracao = config or ConfigPainel()
     fonte = eventos or Distribuidor()
@@ -96,6 +98,7 @@ def criar_app(
     app.state.busca = busca
     app.state.config = configuracao
     app.state.eventos = fonte
+    app.state.indexacao = indexacao or conhecimento.PublicadorRabbit(ConfigRabbit())
 
     # O último adicionado roda primeiro: a sessão vem antes do login.
     app.add_middleware(_ExigirLogin)
@@ -119,6 +122,7 @@ def criar_app(
     app.mount("/static", StaticFiles(directory=_RAIZ / "static"), name="static")
     app.include_router(contas.router)
     app.include_router(agenda.router)
+    app.include_router(conhecimento.router)
     app.include_router(cadastros.router)
 
     @app.get("/saude")

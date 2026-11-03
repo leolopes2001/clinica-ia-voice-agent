@@ -12,7 +12,7 @@ from sqlalchemy import select, text
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
-from clinica_core.config import ConfigPostgres
+from clinica_core.config import ConfigPostgres, ConfigTokens
 from clinica_core.db import criar_engine, criar_fabrica_sessoes
 from clinica_core.modelos import (
     DIMENSAO_EMBEDDING,
@@ -318,3 +318,26 @@ async def test_conexao_do_servidor_e_somente_leitura(engine: AsyncEngine) -> Non
         await sessao.execute(select(text("1")))
         with pytest.raises(DBAPIError, match="read-only"):
             await sessao.execute(text("CREATE TEMP TABLE x (a int)"))
+
+
+async def test_testar_pergunta_exige_o_token_do_painel(engine: AsyncEngine) -> None:
+    transporte = httpx.ASGITransport(app=criar_app(engine, GeradorFalso()))
+    async with httpx.AsyncClient(transport=transporte, base_url="http://mcp") as cliente:
+        corpo = {"clinica_id": str(uuid4()), "pergunta": "oi"}
+        assert (await cliente.post("/testar-pergunta", json=corpo)).status_code == 401
+        errado = await cliente.post(
+            "/testar-pergunta", json=corpo, headers={"Authorization": "Bearer errado"}
+        )
+        assert errado.status_code == 401
+        servicos = await cliente.post(
+            "/testar-pergunta", json=corpo, headers=ConfigTokens().cabecalho_servicos
+        )
+        assert servicos.status_code == 401
+        invalido = await cliente.post(
+            "/testar-pergunta", json={"pergunta": "oi"}, headers=ConfigTokens().cabecalho_painel
+        )
+        assert invalido.status_code == 422
+        vazio = await cliente.post(
+            "/testar-pergunta", json=corpo, headers=ConfigTokens().cabecalho_painel
+        )
+        assert (vazio.status_code, vazio.json()) == (200, {"trechos": []})

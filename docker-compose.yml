@@ -191,6 +191,8 @@ services:
       POSTGRES_DB: ${POSTGRES_DB:-clinica}
       GOOGLE_API_KEY: ${GOOGLE_API_KEY:-}
       EMBEDDING_MODELO: ${EMBEDDING_MODELO:-gemini-embedding-001}
+      # A tela "testar pergunta" do painel.
+      API_TOKEN_PAINEL: ${API_TOKEN_PAINEL:-token-do-painel-de-desenvolvimento}
     # Sem portas no host: o MCP fica só na rede interna do Docker.
     depends_on:
       # As tabelas vêm das migrations, aplicadas pela API ao subir.
