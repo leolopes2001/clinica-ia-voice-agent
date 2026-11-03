@@ -53,7 +53,7 @@ button.perigo:not(.link) { background: var(--erro); color: #fff; }
 .selo.cancelado, .selo.faltou, .selo.erro, .selo.falha { background: var(--erro-fundo); color: var(--erro); }
 .filtros { display: flex; flex-wrap: wrap; gap: 12px; align-items: end; margin-bottom: 16px; }
 .filtros label { margin: 0; }
-.dias { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); }
+.dias { display: grid; gap: 10px; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); }
 .dia { background: var(--superficie); border: 1px solid var(--linha); border-radius: 8px; padding: 10px; min-width: 0; }
 .dia h2 { font-size: .95rem; margin-bottom: 8px; }
 .consulta { border-left: 3px solid var(--linha); padding: 4px 8px; margin-bottom: 8px; font-size: .9rem; overflow-wrap: anywhere; }
@@ -62,3 +62,5 @@ button.perigo:not(.link) { background: var(--erro); color: #fff; }
 pre.transcricao { white-space: pre-wrap; overflow-wrap: anywhere; background: var(--superficie); border: 1px solid var(--linha); border-radius: 8px; padding: 12px; font: inherit; }
 .separado { margin-top: 16px; }
 pre.trecho { white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; margin: 6px 0 0; }
+td input[type=time] { min-width: 0; padding: 7px 4px; }
+.cartao table td, .cartao table th { padding-left: 4px; padding-right: 4px; }
