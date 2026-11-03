@@ -421,7 +421,7 @@ São 7 fases, cada uma terminando em algo que roda e pode ser testado. As fases 
 - [x] T5.1 Login, perfis e auditoria, mais a autenticação entre o painel e a API, que até lá confia nos headers.
 - [x] T5.2 Agenda dia/semana com SSE ao vivo, e criar/remarcar/cancelar manual.
 - [x] T5.3 Cadastros: dentistas, grade, bloqueios, procedimentos, consultórios. O painel avisa quando um procedimento está sem dentista habilitado. Uma migration nova adiciona a `grade_trabalho` exclusion constraints que impedem duas linhas sobrepostas do mesmo dentista no mesmo dia da semana, e o mesmo para o consultório.
-- [ ] T5.4 Base de conhecimento: upload, status de indexação e tela "testar pergunta".
+- [x] T5.4 Base de conhecimento: upload, status de indexação e tela "testar pergunta".
 - [ ] T5.5 Chamadas: lista, transcrição e desfecho.
 - [ ] T5.6 Configurações do agente, incluindo `antecedencia_minima_min`, que até lá vem das settings (`AGENDA_ANTECEDENCIA_MINIMA_MIN`).
 
@@ -468,6 +468,7 @@ O que o código já cobre com fakes, mas só pode ser confirmado com crédito do
 - [ ] Trava em `confirmar_agendamento` por voz: "essa mesma" não agenda, e "sim, não tem problema" agenda. Paciente novo: o "sim" ao nome não confirma a consulta. Os testes usam fakes da transcrição.
 - [ ] Gerar o áudio da frase de espera: `uv run python scripts/gerar_frase_espera.py --motor gemini --voz <voz do atendimento>`. Conferir que a voz combina com a do atendimento e refazer se a voz mudar no painel.
 - [ ] T3.7: medir de novo a latência com a frase, separando o primeiro som da resposta de verdade, e decidir a meta de 1,5 s depois de uma ferramenta, que segue em aberto. Conferir se a frase não atropela a resposta e se o corte com a fala do paciente funciona.
+- [ ] T5.4: enviar um PDF, um DOCX e um TXT pelo painel, ver o status ir de `processando` a `pronto` e testar uma pergunta na tela. Indexar gasta crédito de embeddings. Sem crédito, o documento vai para `erro`, e a busca funciona só por texto.
 
 ### Com o gateway e a telefonia
 
@@ -563,3 +564,5 @@ Decisões técnicas tomadas durante a implementação, com a opção mais conser
 | T4.6 | `clinica_core.telefone.normalizar_telefone` veio antes da T4.6, porque o cadastro de pacientes já precisa dela. Aceita o número com ou sem +55, com 0 antes do DDD ou como URI SIP. Sem DDD, ou com "anonymous", devolve vazio: nunca adivinha o DDD. | Um telefone errado identificaria a pessoa errada. É mais seguro tratar como número oculto. |
 | T5.3 | Os cadastros são uma tela só, descrita como dados (`clinica_painel/formularios.py`). A API confere que dentista e consultório são da mesma clínica, porque a FK não sabe disso. Um registro em uso não é apagado, e a mensagem sugere desativar. A lista de bloqueios mostra só os que ainda valem. Campos de data e hora valem no fuso da clínica. | Reduz o código de sete telas quase iguais, sem mudar as regras. A lista de bloqueios cresceria sem limite com um almoço por dia. |
 | T5.3 | As exclusion constraints da grade usam `tsrange` com uma data fixa, porque `time` não tem tipo de intervalo próprio. Em um banco que já tenha grades sobrepostas, a migration falha ao subir a API e aponta o conflito. | Falhar alto é melhor que apagar um horário em silêncio. O seed não tem sobreposição. |
+| T5.4 | O painel salva o arquivo no volume com um nome gerado no servidor, registra o documento na API e publica `conhecimento.indexar`. Aceita até 20 MB. Se o broker estiver fora do ar, o documento vai para `erro`, em vez de ficar em `processando` para sempre, e pode ser indexado de novo. Só textos escritos no painel podem ser editados nele. | O nome do navegador nunca escolhe um caminho no volume. A spec define o painel como produtor de `conhecimento.indexar`, e a decisão da T2.2 pede salvar o texto como arquivo. |
+| T5.4 | A tela "testar pergunta" chama a rota `POST /testar-pergunta` do `mcp-conhecimento`, com o token do painel, e usa a mesma função de busca do agente. Sem o Gemini, ela responde só pela busca por texto. Cada pergunta nova gasta um embedding. | Mostra exatamente o que o agente recebe, sem copiar a busca para outro serviço. O MCP continua só na rede interna. |

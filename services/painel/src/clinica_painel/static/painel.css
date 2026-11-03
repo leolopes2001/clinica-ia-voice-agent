@@ -60,3 +60,5 @@ button.perigo:not(.link) { background: var(--erro); color: #fff; }
 .consulta.confirmado { border-color: var(--ok); } .consulta.segurado { border-color: var(--alerta); }
 .consulta.cancelado, .consulta.faltou { border-color: var(--erro); opacity: .75; }
 pre.transcricao { white-space: pre-wrap; overflow-wrap: anywhere; background: var(--superficie); border: 1px solid var(--linha); border-radius: 8px; padding: 12px; font: inherit; }
+.separado { margin-top: 16px; }
+pre.trecho { white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; margin: 6px 0 0; }

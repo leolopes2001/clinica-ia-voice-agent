@@ -1,5 +1,6 @@
 from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 from uuid import UUID
 
@@ -35,6 +36,17 @@ class PublicadorFalso:
         self.eventos_publicados.extend(eventos)
 
 
+class IndexacaoFalsa:
+    def __init__(self) -> None:
+        self.pedidos: list[UUID] = []
+        self.erro: Exception | None = None
+
+    async def indexar(self, documento_id: UUID) -> None:
+        if self.erro is not None:
+            raise self.erro
+        self.pedidos.append(documento_id)
+
+
 @dataclass
 class Ambiente:
     api: FastAPI
@@ -47,10 +59,13 @@ class Ambiente:
     busca_pedidos: list[httpx.Request]
     # O que a busca do mcp-conhecimento falsa devolve.
     busca_trechos: list[dict[str, str]]
+    indexacao: IndexacaoFalsa
+    diretorio: Path
+    busca_erro: list[int]
 
 
 @pytest.fixture
-async def ambiente(banco: str) -> AsyncIterator[Ambiente]:
+async def ambiente(banco: str, tmp_path: Path) -> AsyncIterator[Ambiente]:
     publicador = PublicadorFalso()
     api = criar_api(ConfigPostgres(db=banco), ConfigAgenda(antecedencia_minima_min=0), publicador)
     async with api.state.fabrica_sessoes() as sessao:
@@ -77,9 +92,13 @@ async def ambiente(banco: str) -> AsyncIterator[Ambiente]:
         dados = (clinica.id, admin.id, recepcao.id)
     pedidos: list[httpx.Request] = []
     trechos: list[dict[str, str]] = []
+    busca_erro: list[int] = []
+    indexacao = IndexacaoFalsa()
 
     def responder_busca(pedido: httpx.Request) -> httpx.Response:
         pedidos.append(pedido)
+        if busca_erro:
+            return httpx.Response(busca_erro[0])
         return httpx.Response(200, json={"trechos": trechos})
 
     cliente_api = httpx.AsyncClient(
@@ -91,8 +110,25 @@ async def ambiente(banco: str) -> AsyncIterator[Ambiente]:
         transport=httpx.MockTransport(responder_busca), base_url="http://busca"
     )
     eventos = Distribuidor()
-    painel = criar_painel(cliente_api, cliente_busca, ConfigPainel(cookie_seguro=False), eventos)
-    yield Ambiente(api, painel, *dados, eventos, publicador, pedidos, trechos)
+    painel = criar_painel(
+        cliente_api,
+        cliente_busca,
+        ConfigPainel(cookie_seguro=False, conhecimento_dir=tmp_path),
+        eventos,
+        indexacao,
+    )
+    yield Ambiente(
+        api,
+        painel,
+        *dados,
+        eventos,
+        publicador,
+        pedidos,
+        trechos,
+        indexacao,
+        tmp_path,
+        busca_erro,
+    )
     await cliente_api.aclose()
     await cliente_busca.aclose()
     await api.state.engine.dispose()

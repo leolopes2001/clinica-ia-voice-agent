@@ -1,3 +1,4 @@
+import secrets
 from dataclasses import asdict
 from typing import Any
 from uuid import UUID
@@ -10,6 +11,7 @@ from starlette.applications import Starlette
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
+from clinica_core.config import ConfigTokens
 from clinica_core.embeddings import GeradorEmbeddings
 from clinica_core.modelos import Chamada
 from clinica_mcp_conhecimento.busca import MAXIMO_TRECHOS, buscar
@@ -37,6 +39,7 @@ def criar_servidor(engine: AsyncEngine, gerador: GeradorEmbeddings) -> MCPServer
         engine.execution_options(postgresql_readonly=True), expire_on_commit=False
     )
     mcp: MCPServer = MCPServer("mcp-conhecimento", instructions=_INSTRUCOES)
+    cabecalho_do_painel = ConfigTokens().cabecalho_painel["Authorization"]
 
     @mcp.tool()
     async def buscar_conhecimento(
@@ -57,6 +60,22 @@ def criar_servidor(engine: AsyncEngine, gerador: GeradorEmbeddings) -> MCPServer
                 return {"ok": False, "motivo": "chamada_nao_encontrada", "trechos": []}
             trechos = await buscar(sessao, gerador, clinica_id, pergunta, k)
         return {"ok": True, "trechos": [asdict(trecho) for trecho in trechos]}
+
+    @mcp.custom_route("/testar-pergunta", methods=["POST"])  # type: ignore[untyped-decorator]
+    async def testar_pergunta(pedido: Request) -> JSONResponse:
+        """A tela "testar pergunta" do painel: a mesma busca do agente, sem uma chamada."""
+        recebido = pedido.headers.get("authorization", "")
+        if not secrets.compare_digest(recebido.encode(), cabecalho_do_painel.encode()):
+            return JSONResponse({"motivo": "nao_autenticado"}, status_code=401)
+        try:
+            corpo = await pedido.json()
+            clinica_id = UUID(corpo["clinica_id"])
+            pergunta = str(corpo["pergunta"])
+        except (ValueError, KeyError, TypeError):
+            return JSONResponse({"motivo": "entrada_invalida"}, status_code=422)
+        async with fabrica() as sessao:
+            trechos = await buscar(sessao, gerador, clinica_id, pergunta)
+        return JSONResponse({"trechos": [asdict(trecho) for trecho in trechos]})
 
     @mcp.custom_route("/saude", methods=["GET"])  # type: ignore[untyped-decorator]
     async def saude(_: Request) -> JSONResponse:
