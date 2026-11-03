@@ -123,7 +123,7 @@ O paciente liga para o número da clínica e resolve tudo por voz, sem esperar a
 **H11 — Painel: chamadas.** Como administrador, quero auditar os atendimentos.
 
 - [ ] Lista de chamadas com telefone, duração, desfecho (agendou, remarcou, cancelou, dúvida, transferiu, abandonou) e transcrição.
-- [ ] As transcrições são apagadas automaticamente após o prazo de retenção configurado.
+- [ ] As transcrições e os telefones são apagados automaticamente após o prazo de retenção configurado.
 
 ### Requisitos não funcionais
 
@@ -259,8 +259,8 @@ Todas as tabelas, exceto `clinicas` e `idempotencia`, têm `clinica_id` com FK p
 | `bloqueios` | dentista_id (nulo = clínica toda), periodo, motivo | Férias, feriados, almoço |
 | `pacientes` | nome, nome_normalizado, telefone_e164, data_nascimento, consentimento_em | Um telefone pode ter vários pacientes. Índice em (clinica_id, telefone_e164) e unicidade em (clinica_id, telefone_e164, nome_normalizado, data_nascimento). `nome_normalizado` é gerado no banco: sem acentos, em minúsculas e com espaços compactados |
 | `agendamentos` | (ver SQL acima) | |
-| `chamadas` | telefone, sala, inicio, fim, desfecho, transcricao, apagar_em, paciente_id, identidade_verificada_em, tentativas_identidade, consentimento_em, consentimento_recusado_em | `paciente_id` é o paciente escolhido na chamada. Trocar de paciente desfaz a verificação, mas não zera as tentativas. As colunas de consentimento entram na T3.2. O `telefone` passa a aceitar nulo (número oculto) na T4.6 |
-| `pedidos_retorno` | protocolo (único), chamada_id, telefone, motivo, status, criado_em | Pedidos de retorno da H7 |
+| `chamadas` | telefone, sala, inicio, fim, desfecho, transcricao, apagar_em, paciente_id, identidade_verificada_em, tentativas_identidade, consentimento_em, consentimento_recusado_em | `paciente_id` é o paciente escolhido na chamada. Trocar de paciente desfaz a verificação, mas não zera as tentativas. As colunas de consentimento entram na T3.2. O `telefone` aceita nulo desde a T6.1: número oculto (T4.6), ou prazo de retenção vencido |
+| `pedidos_retorno` | protocolo (único), chamada_id, telefone, motivo, status, criado_em | Pedidos de retorno da H7. Telefone e motivo de um pedido concluído são apagados no prazo de retenção |
 | `conhecimento_documentos` | titulo, arquivo, status, ativo | |
 | `conhecimento_trechos` | documento_id, ordem, texto, embedding `vector(768)`, tsv `tsvector` | Índice HNSW + GIN. `tsv` é gerado no banco a partir de `texto` |
 | `idempotencia` | chave, resposta_json, criado_em | Limpeza após 24 h |
@@ -314,7 +314,7 @@ Há um exchange `clinica.eventos` do tipo topic, mais o `clinica.dlx` (direct) p
 | `holds.atraso` (expiração por mensagem) → DLX → `holds.expirar` | API | Worker | Liberar holds vencidos. Uma varredura do worker a cada 60 s, fora do broker, cobre mensagens perdidas |
 | `conhecimento.indexar` | Painel | Worker | Extrair, fatiar, gerar embeddings e gravar |
 | `chamada.encerrada` | Agente | Worker | Gravar transcrição, desfecho e métricas |
-| `manutencao.diaria` | Agendador do worker | Worker | Retenção LGPD e limpeza de idempotência |
+| `manutencao.diaria` | Agendador do worker, ao subir e a cada 24 h | Worker | Retenção LGPD e limpeza de idempotência |
 
 O Redis continua no Compose só porque o LiveKit exige. O broker da aplicação é o RabbitMQ.
 
@@ -414,7 +414,7 @@ São 7 fases, cada uma terminando em algo que roda e pode ser testado. As fases 
 - [ ] T4.3 Configurar o gateway: rota GSM → IP para o `livekit-sip`, codec G.711 e caller ID repassado.
 - [ ] T4.4 Teste real com 2 celulares ligando ao mesmo tempo para o mesmo horário. *Pronto quando:* o critério da H4 passa.
 - [ ] T4.5 Transferência para a recepção (SIP REFER ou discagem para ramal/celular).
-- [ ] T4.6 Número oculto: a chamada é aceita sem telefone (`chamadas.telefone` passa a aceitar nulo, e o `POST /chamadas` deixa de exigir o campo). A API recusa, com o motivo `telefone_oculto`, as mesmas ferramentas bloqueadas pela falta de consentimento, e o agente só tira dúvidas e transfere. Sem telefone não há pedido de retorno: fora do horário comercial, o agente avisa e pede para ligar de novo. Normalizar para E.164 o caller ID recebido do gateway.
+- [ ] T4.6 Número oculto: a chamada é aceita sem telefone (`chamadas.telefone` já aceita nulo desde a T6.1, e o `POST /chamadas` deixa de exigir o campo). A API recusa, com o motivo `telefone_oculto`, as mesmas ferramentas bloqueadas pela falta de consentimento, e o agente só tira dúvidas e transfere. Sem telefone não há pedido de retorno: fora do horário comercial, o agente avisa e pede para ligar de novo. Normalizar para E.164 o caller ID recebido do gateway.
 
 **Fase 5 — Painel administrativo**
 
@@ -427,7 +427,7 @@ São 7 fases, cada uma terminando em algo que roda e pode ser testado. As fases 
 
 **Fase 6 — Produção local e LGPD**
 
-- [ ] T6.1 Retenção automática de transcrições e texto de consentimento revisado. A retenção só pode apagar a transcrição de uma chamada ligada a uma consulta de voz: a FK e o CHECK `voz_exige_chamada` impedem apagar a chamada ou anular `chamada_id`. *A resolver:* o prazo do telefone guardado nessa linha.
+- [x] T6.1 Retenção automática de transcrições e texto de consentimento revisado. A retenção só pode apagar a transcrição de uma chamada ligada a uma consulta de voz: a FK e o CHECK `voz_exige_chamada` impedem apagar a chamada ou anular `chamada_id`. O telefone segue o mesmo prazo (`RETENCAO_TRANSCRICAO_DIAS`), em toda chamada, como decidido pelo usuário em 02/11/2026.
 - [ ] T6.2 Backup diário do Postgres (`pg_dump` num volume e cópia externa).
 - [ ] T6.3 Logs estruturados e um painel simples de saúde (serviços, filas, chamadas ativas).
 - [ ] T6.4 Runbook: o que fazer se cair a internet, o gateway ou a API do Gemini.
@@ -470,12 +470,15 @@ O que o código já cobre com fakes, mas só pode ser confirmado com crédito do
 - [ ] T3.7: medir de novo a latência com a frase, separando o primeiro som da resposta de verdade, e decidir a meta de 1,5 s depois de uma ferramenta, que segue em aberto. Conferir se a frase não atropela a resposta e se o corte com a fala do paciente funciona.
 - [ ] T5.4: enviar um PDF, um DOCX e um TXT pelo painel, ver o status ir de `processando` a `pronto` e testar uma pergunta na tela. Indexar gasta crédito de embeddings. Sem crédito, o documento vai para `erro`, e a busca funciona só por texto.
 - [ ] T5.6: fazer ligações de teste com cada voz que você considerar, conferir se o modelo aceita o nome e escolher pelo ouvido. Conferir também se a saudação configurada no painel é falada e se, fora do horário, o agente avisa e registra o pedido de retorno.
+- [ ] Ouvir o novo texto do consentimento numa ligação: ele ficou mais longo, e o paciente pode interromper. Conferir se o agente fala o prazo certo.
 
 ### Com o gateway e a telefonia
 
 ### Pelo usuário
 - [ ] Decidir como a recepção acessa o painel: na própria máquina do servidor, ou pela rede com `PAINEL_BIND` e HTTPS na frente. Com HTTP puro na rede, a senha trafega aberta.
 - [ ] Na sua máquina, a porta 8080 está ocupada por um processo Java, que não é do projeto. Defina `PAINEL_PORTA=8088` no `.env`, ou libere a 8080, antes de subir o painel.
+- [ ] Levar o texto do consentimento a um advogado. Pontos a confirmar: base legal para dados de saúde, e se é preciso dizer que a voz passa pelo Google, na nuvem.
+- [ ] Decidir como atender a um pedido de apagar os dados de um paciente (LGPD). O painel não apaga pacientes, porque consultas apontam para eles. Também não há prazo para consultas e `motivo_cancelamento`.
 
 ## Decisões tomadas pelo agente
 
@@ -527,7 +530,7 @@ Decisões técnicas tomadas durante a implementação, com a opção mais conser
 | T3.2 | Confirmado pelo usuário em 02/11/2026. A recusa de consentimento vale até o fim da chamada: um "sim" depois não a desfaz. Recusar depois de aceitar apaga o aceite, tira o paciente selecionado e desfaz a verificação. | É a leitura mais protetora da H1, e uma recusa nunca vira aceite por erro de áudio. O custo é a pessoa que mudar de ideia precisar da recepção ou de outra ligação. |
 | T3.2 | A checagem de consentimento fica em uma dependência das rotas da API e só vale para `origem=voz`. Rota nova de voz: `POST /chamadas/consentimento`, sem `Idempotency-Key`, porque repetir a mesma resposta dá o mesmo resultado. | A regra fica na API, num único lugar, como pede a T3.2. O painel continua sem consentimento de chamada. |
 | T3.2 | O cadastro por voz copia `consentimento_em` da chamada, e também preenche o campo de um paciente que já existia sem ele. | Se a mesma pessoa é "cadastrada" de novo com consentimento, o registro passa a ter esse consentimento. |
-| T3.2 | O texto do consentimento e a apresentação como "recepcionista virtual" estão em `prompts/recepcionista.md`. O texto é um rascunho, e a revisão é da T6.1. | A H1 exige o pedido. A pessoa precisa saber que fala com uma recepcionista virtual. |
+| T3.2 | O texto do consentimento está em `prompts/recepcionista.md`. A revisão foi feita na T6.1. | A H1 exige o pedido. A pessoa precisa saber que fala com uma assistente virtual. |
 | T3.2 | O desfecho e a transcrição vêm dos eventos da sessão do ADK. Sem consentimento, a transcrição nem sai do agente, e o worker confere de novo no banco antes de gravar. Vale o último desfecho entre agendou, remarcou, cancelou e transferiu; sem nenhum deles, é `duvida` se a pessoa falou, e `abandonou` se não falou. | Duas barreiras para a transcrição. Assim ela também não fica parada na fila nem na DLQ sem consentimento. |
 | T3.2 | `apagar_em` já é gravado com `RETENCAO_TRANSCRICAO_DIAS` (padrão: 90), só quando há transcrição guardada. A limpeza continua na T6.1. | Toda transcrição nasce com prazo. |
 | T3.2 | Sem transferência disponível, como no navegador, o agente diz que não consegue transferir e oferece pedido de retorno, se houver consentimento. O horário comercial da H7 entra com a T5.6, e a transferência real, com a T4.5. | A Fase 3 não tem SIP, e o `LiveKitToolset` só oferece `transfer_call` em ligação SIP. |
@@ -570,3 +573,7 @@ Decisões técnicas tomadas durante a implementação, com a opção mais conser
 | T5.5 | A tela de chamadas é só para administradores (H11). Ler uma transcrição grava `ver_transcricao` na auditoria, com o id da chamada e sem o texto. Nova tela "Retornos", para recepção e administradores, com o botão de concluir. | A Constituição pede registrar quem viu. A tela de retornos não estava na lista do plano, mas o pedido registrado pelo agente (H7) não chegaria a ninguém sem ela. |
 | T5.6 | A saudação do painel troca só a primeira frase. O pedido de autorização continua no prompt e não pode ser editado. A API diz ao agente, ao atender, se é horário comercial, e isso entra no prompt como fato. O número de transferência não vai ao modelo. Sem horário cadastrado, nada conta como "fora do horário". | Um administrador não remove o consentimento sem querer, e o modelo não decide nem vê o destino da transferência (item 3 da Constituição). |
 | T5.6 | A voz é escolhida numa lista fixa: `Aoede`, `Charon`, `Fenrir`, `Kore`, `Leda`, `Orus`, `Puck` e `Zephyr`. O padrão continua sendo a voz do modelo. A antecedência mínima da tabela vence `AGENDA_ANTECEDENCIA_MINIMA_MIN`, e o campo vazio volta para a variável. | Um nome de voz inválido derrubaria a ligação no Gemini. A lista ainda não foi testada com o modelo escolhido, então está em "Pendente de validação". |
+| T6.1 | Decidido pelo usuário em 02/11/2026: depois de `RETENCAO_TRANSCRICAO_DIAS`, o telefone some de toda chamada, inclusive as ligadas a uma consulta e as sem transcrição. Telefone e motivo de pedidos de retorno concluídos seguem o mesmo prazo, e os pendentes ficam. A linha mantém data, duração e desfecho. O cadastro do paciente não muda. | Coleta mínima (LGPD). `agendamentos.chamada_id` continua apontando para a linha, como pedem a FK e o CHECK. |
+| T6.1 | A retenção também tira `paciente_id` e `identidade_verificada_em` da chamada. O nulo em `chamadas.telefone` entrou aqui, antes da T4.6, que passa a usá-lo. O prazo do telefone conta do fim da chamada, ou do início se ela nunca recebeu o fim. | Sem isso, o telefone apagado voltaria por uma junção com `pacientes`. A linha pedida guarda só data, duração e desfecho. |
+| T6.1 | O worker publica `manutencao.diaria` ao subir e a cada 24 h, e o consumidor pode repetir sem efeito. Falha vai para `manutencao.diaria.dlq`. A limpeza de idempotência vale para chaves com mais de 24 h. A auditoria não tem prazo, porque não guarda dados de paciente. | Um worker reiniciado toda noite nunca chegaria às 24 h. A spec não pede agendador externo. |
+| T6.1 | Texto do consentimento escolhido pelo usuário em 02/11/2026: diz que é uma inteligência artificial, a finalidade, o prazo em dias e a alternativa de quem recusa. O prazo falado vem de `RETENCAO_TRANSCRICAO_DIAS`, pela API. | Se o prazo mudar, o agente fala o valor certo, sem editar o prompt. |

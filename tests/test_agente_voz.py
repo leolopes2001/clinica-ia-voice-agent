@@ -353,3 +353,16 @@ def test_voz_escolhida_vai_para_o_gemini() -> None:
     padrao = config_de_voz(ConfigAgente()).speech_config
     assert padrao is not None
     assert padrao.voice_config is None
+
+
+def test_consentimento_revisado_diz_que_e_ia_o_prazo_e_a_alternativa() -> None:
+    agora = datetime(2026, 11, 3, tzinfo=UTC)
+    texto = montar_prompt("Clínica X", agora, ConfiguracaoDaLigacao(retencao_dias=30))
+    assert (
+        '"Olá, você ligou para a Clínica X. Eu sou a assistente virtual da clínica, uma '
+        "inteligência artificial. Para consultar seu cadastro e marcar consultas, preciso usar "
+        "seus dados e guardar a transcrição desta conversa por 30 dias, conforme a Lei Geral de "
+        "Proteção de Dados. Você autoriza? Se preferir não autorizar, ainda posso tirar dúvidas "
+        'ou transferir para a recepção."'
+    ) in texto
+    assert "{retencao_dias}" not in texto
